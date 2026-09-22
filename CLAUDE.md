@@ -337,3 +337,17 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw   # macOS
 ```
 
 `container/build.sh` reads `INSTALL_CJK_FONTS` from `.env` and passes it through as a Docker build-arg. Without CJK fonts, Chromium-rendered screenshots and PDFs containing CJK text show tofu (empty rectangles) instead of characters.
+
+<!-- Aijutsu fork note. Keep this section last: upstream doesn't have it, and keeping it at the end avoids merge conflicts. -->
+
+## Aijutsu fork (aith-nanoclaw-codex-telegram)
+
+This checkout is Aijutsu's fork of NanoClaw. It is a Git submodule of the AI in the Heartlands course repository (aith), at `course/001-building-agents-with-nanoclaw/nanoclaw`, and the course pins one commit of it.
+
+The instructions above still apply to working on NanoClaw itself. For committing, pushing, and updating, aith's rules apply. Read the "Fork submodules" section of aith's `AGENTS.md` before you do any of those: `../../../AGENTS.md` from here, or https://github.com/aijutsu/aith/blob/main/AGENTS.md#fork-submodules if this checkout isn't inside aith. In short:
+
+- Work on `main`, starting from the commit aith pins. Never commit on a detached HEAD.
+- Take upstream changes only with `/update-nanoclaw`. Never `git pull`, `git merge`, or `git rebase` from `upstream`.
+- Every change is a skill: apply an existing one (`/add-*`, `/customize`), or turn your edit into one before aith pins it.
+- Before every commit, read `git status`. Never commit `.env` files, keys, tokens, or runtime data.
+- Push this fork (`origin`, on GitHub) together with the aith commit that moves the pin. aith itself is pushed to its own `origin` (Gitea), never to github.com/aijutsu/aith.
