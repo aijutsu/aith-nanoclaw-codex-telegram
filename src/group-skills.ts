@@ -23,6 +23,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR } from './config.js';
+import { removeSkillDestinationSync } from './skill-filesystem.js';
 
 /** The group-private store templates stamp skills into (Claude's read plane). */
 function templateSkillsSource(agentGroupId: string): string {
@@ -50,7 +51,7 @@ export function materializeTemplateSkills(agentGroupId: string, destSkillsDir: s
     // Template skills are always real directories; links are never ours.
     if (!fs.lstatSync(path.join(src, name)).isDirectory()) continue;
     const dest = path.join(destSkillsDir, name);
-    fs.rmSync(dest, { recursive: true, force: true });
+    removeSkillDestinationSync(dest);
     fs.cpSync(path.join(src, name), dest, { recursive: true });
   }
 }

@@ -81,6 +81,28 @@ describe('walkPluginDir', () => {
 });
 
 describe('copyPluginDir', () => {
+  it.each([false, true])('replaces a destination link without modifying its target (target exists: %s)', (exists) => {
+    write('SKILL.md', 'template');
+    const target = path.join(root, 'target');
+    if (exists) {
+      fs.mkdirSync(target);
+      fs.writeFileSync(path.join(target, 'keep.txt'), 'untouched');
+    }
+    const dest = path.join(root, 'dest');
+    fs.symlinkSync(target, dest, 'dir');
+
+    copyPluginDir(src, dest);
+
+    expect(fs.lstatSync(dest).isDirectory()).toBe(true);
+    expect(fs.readFileSync(path.join(dest, 'SKILL.md'), 'utf-8')).toBe('template');
+    if (exists) {
+      expect(fs.readdirSync(target)).toEqual(['keep.txt']);
+      expect(fs.readFileSync(path.join(target, 'keep.txt'), 'utf-8')).toBe('untouched');
+    } else {
+      expect(fs.existsSync(target)).toBe(false);
+    }
+  });
+
   it('copies the tree, preserves the executable bit, and replaces stale content', () => {
     write('plugin.json', '{}');
     write('skills/a/scripts/run.sh', '#!/bin/sh\n');

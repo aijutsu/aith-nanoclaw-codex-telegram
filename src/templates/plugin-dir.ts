@@ -14,6 +14,8 @@
 import fs from 'fs';
 import path from 'path';
 
+import { removeSkillDestinationSync } from '../skill-filesystem.js';
+
 // Abuse bounds, not sizing guidance — the real templates are a few dozen
 // files each.
 export const MAX_PLUGIN_FILES = 2000;
@@ -93,7 +95,7 @@ export function walkPluginDir(root: string): PluginFile[] {
  */
 export function copyPluginDir(src: string, dest: string): void {
   const files = walkPluginDir(src);
-  fs.rmSync(dest, { recursive: true, force: true });
+  removeSkillDestinationSync(dest);
   fs.mkdirSync(dest, { recursive: true });
   for (const file of files) {
     const target = path.join(dest, ...file.rel.split('/'));

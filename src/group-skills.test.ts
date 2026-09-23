@@ -85,4 +85,20 @@ describe('materializeTemplateSkills', () => {
 
     expect(fs.existsSync(path.join(src, 'widget', 'SKILL.md'))).toBe(true);
   });
+
+  it('replaces a dangling shared-skill link with the template override on first spawn and respawn', () => {
+    templateSkill('g6', 'welcome', 'SKILL.md', 'template welcome');
+    const dest = path.join(TEST_ROOT, 'grp6', '.agents', 'skills');
+    fs.mkdirSync(dest, { recursive: true });
+    fs.symlinkSync('/app/skills/welcome', path.join(dest, 'welcome'));
+
+    materializeTemplateSkills('g6', dest);
+
+    expect(fs.lstatSync(path.join(dest, 'welcome')).isDirectory()).toBe(true);
+    expect(fs.readFileSync(path.join(dest, 'welcome', 'SKILL.md'), 'utf-8')).toBe('template welcome');
+
+    templateSkill('g6', 'welcome', 'SKILL.md', 'updated welcome');
+    materializeTemplateSkills('g6', dest);
+    expect(fs.readFileSync(path.join(dest, 'welcome', 'SKILL.md'), 'utf-8')).toBe('updated welcome');
+  });
 });
