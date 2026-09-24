@@ -543,6 +543,62 @@ describe('createChatSdkBridge.deliver — display cards (send_card)', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('passes the reply target through to the SDK adapter', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ postMessage }),
+      supportsThreads: false,
+    });
+    await bridge.deliver('telegram:42', null, {
+      kind: 'chat-sdk',
+      content: { text: 'answer' },
+      replyToMessageId: '42:11',
+    });
+    expect(calls[0].message).toMatchObject({ markdown: 'answer', replyToMessageId: '42:11' });
+  });
+
+  it('quotes only the head of a split reply — a quote on every chunk is noise', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ postMessage }),
+      supportsThreads: false,
+      maxTextLength: 10,
+    });
+    await bridge.deliver('telegram:42', null, {
+      kind: 'chat-sdk',
+      content: { text: 'alpha bravo charlie delta echo' },
+      replyToMessageId: '42:11',
+    });
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls[0].message).toMatchObject({ replyToMessageId: '42:11' });
+    for (const call of calls.slice(1)) expect(call.message).not.toHaveProperty('replyToMessageId');
+  });
+
+  it('carries the reply target on a files-only send', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ postMessage }),
+      supportsThreads: false,
+    });
+    await bridge.deliver('telegram:42', null, {
+      kind: 'chat-sdk',
+      content: {},
+      files: [{ filename: 'report.pdf', data: Buffer.from('pdf') }],
+      replyToMessageId: '42:11',
+    });
+    expect(calls[0].message).toMatchObject({ replyToMessageId: '42:11' });
+  });
+
+  it('leaves the postable free of reply fields when the host had no target', async () => {
+    const { calls, postMessage } = makePostCapture();
+    const bridge = createChatSdkBridge({
+      adapter: stubAdapter({ postMessage }),
+      supportsThreads: false,
+    });
+    await bridge.deliver('telegram:42', null, { kind: 'chat-sdk', content: { text: 'hello' } });
+    expect(calls[0].message).not.toHaveProperty('replyToMessageId');
+  });
+
   it('falls through to the text branch for non-card chat-sdk payloads (no regression)', async () => {
     const { calls, postMessage } = makePostCapture();
     const bridge = createChatSdkBridge({

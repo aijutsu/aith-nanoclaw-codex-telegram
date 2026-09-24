@@ -15,6 +15,7 @@ import {
   LinkButton,
   type CardChild,
   type Adapter,
+  type AdapterPostableMessage,
   type AssistantContextChangedEvent,
   type AssistantThreadStartedEvent,
   type ConcurrencyStrategy,
@@ -47,6 +48,20 @@ interface ConnectionAwareAdapter extends Adapter {
 export interface ReplyContext {
   text: string;
   sender: string;
+}
+
+/**
+ * Out-of-band field on an SDK postable: the platform message id this send
+ * should quote.
+ *
+ * The Chat SDK's postable union has no reply concept, so there is no typed
+ * slot to put this in. It rides along as an extra property — inert for every
+ * adapter that doesn't look for it, read by those that do (see
+ * ReplyAwareTelegramAdapter in telegram.ts). Named here rather than left to
+ * spread semantics so the contract is visible from both ends.
+ */
+export interface PostableReplyTarget {
+  replyToMessageId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -929,6 +944,13 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         return result?.id;
       }
 
+      // Native reply threading. Passed straight through to the SDK adapter as
+      // an extra field on the postable: adapters that understand it quote the
+      // message being answered, adapters that don't ignore an unknown key.
+      // Only the head of a split reply and the files-only send carry it — a
+      // quote on every chunk of a long answer is noise, not context.
+      const replyTo = message.replyToMessageId ? { replyToMessageId: message.replyToMessageId } : {};
+
       // Normal message
       const rawText = (content.markdown as string) || (content.text as string);
       const text = rawText ? transformText(rawText) : rawText;
@@ -948,9 +970,12 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
         for (let i = 0; i < chunks.length; i++) {
           const chunk = chunks[i];
           const attachFiles = i === 0 && fileUploads && fileUploads.length > 0;
+          const head = i === 0 ? replyTo : {};
           const result = await adapter.postMessage(
             tid,
-            attachFiles ? { markdown: chunk, files: fileUploads } : { markdown: chunk },
+            (attachFiles
+              ? { markdown: chunk, files: fileUploads, ...head }
+              : { markdown: chunk, ...head }) as AdapterPostableMessage & PostableReplyTarget,
           );
           if (i === 0) firstId = result?.id;
         }
@@ -961,7 +986,11 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
           data: f.data,
           filename: f.filename,
         }));
-        const result = await adapter.postMessage(tid, { markdown: '', files: fileUploads });
+        const result = await adapter.postMessage(tid, {
+          markdown: '',
+          files: fileUploads,
+          ...replyTo,
+        } as AdapterPostableMessage & PostableReplyTarget);
         return result?.id;
       }
     },

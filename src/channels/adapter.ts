@@ -103,6 +103,21 @@ export interface OutboundMessage {
   kind: string;
   content: unknown; // parsed JSON from messages_out
   files?: OutboundFile[]; // file attachments from the session outbox
+  /**
+   * Platform message id of the inbound message this reply answers, for
+   * channels with native reply threading (Telegram's `reply_parameters`,
+   * WhatsApp quotes). Derived host-side in delivery.ts from
+   * `messages_out.in_reply_to` with the per-agent-group namespace stripped
+   * (see messageIdForAgent in router.ts), so the value an adapter sees is the
+   * platform's own id in that platform's own format.
+   *
+   * Advisory, never load-bearing: the target may be deleted, from another
+   * chat, or (for a host-synthesized inbound id) not a platform id at all.
+   * Adapters MUST fall back to an unquoted send rather than fail delivery,
+   * and are free to ignore it entirely — whether a quote is good UX is a
+   * per-channel decision made in the adapter, not here.
+   */
+  replyToMessageId?: string;
 }
 
 /** Discovered conversation info (from syncConversations). */

@@ -348,6 +348,13 @@ Watch the two traps: `Location` is **text** on Events and a **relation** everywh
 - **Write the change, don't narrate it.** When a loan comes back: set `Returned On`, flip `Status`
   to `Returned`, and put the Item's `Availability` back to `Available`. All three, or the next
   brief lies.
+- **Never say you've logged something until the write came back clean.** Read what the call
+  actually returned, not what you meant it to do. A create or update fails on an unknown property,
+  a select option that isn't on the list, a stale data source ID, or a relation you passed as a
+  name instead of a page ID — and "Logged ✅" after one of those is a lie the community will plan
+  around. When it fails, say plainly what you were trying to write and what came back, then fix it
+  or ask. Claiming a write you didn't make is the worst thing you can do in here (ground rule 1,
+  *Ground everything in a real source*).
 - **Don't delete.** Set a terminal status — News `Archived`, Events `Cancelled`, Items for Loan
   `Retired`, Lost and Found `Closed`, Help Requests `Cancelled` — and log it when it was an Admin
   removing something. The community's history is worth more than a tidy table.

@@ -118,6 +118,9 @@ export interface ChannelDeliveryAdapter {
     /** Delivering adapter instance (defaults to channelType downstream).
      *  Host-internal only — containers never see instance. */
     instance?: string,
+    /** Platform message id this reply quotes, when the channel supports
+     *  native reply threading. See OutboundMessage.replyToMessageId. */
+    replyToMessageId?: string,
   ): Promise<string | undefined>;
   setTyping?(
     channelType: string,
@@ -542,6 +545,7 @@ async function deliverMessage(
     msg.content,
     files,
     deliverInstance,
+    platformReplyTarget(msg.inReplyTo, session.agent_group_id),
   );
   log.info('Message delivered', {
     id: msg.id,
@@ -554,6 +558,30 @@ async function deliverMessage(
   clearOutbox(session.agent_group_id, session.id, msg.id);
 
   return platformMsgId;
+}
+
+/**
+ * Recover the platform's own message id from an outbound row's `in_reply_to`.
+ *
+ * The container stamps `in_reply_to` with the `messages_in.id` of the message
+ * it answered, and the router namespaces that id per agent group
+ * (`<inbound id>:<agent_group_id>` — messageIdForAgent in router.ts) because
+ * one inbound fans out into several session DBs where `id` is a PRIMARY KEY.
+ * Stripping our own suffix back off yields whatever the adapter originally
+ * reported as the message id.
+ *
+ * A row whose id doesn't carry this session's suffix isn't a routed inbound
+ * (agent-to-agent return paths, direct writes) — no quote target, return
+ * undefined. What survives the strip is still only a *candidate*: the router
+ * synthesizes an id when an adapter reports none, so adapters must treat the
+ * value as advisory (see OutboundMessage.replyToMessageId).
+ */
+export function platformReplyTarget(inReplyTo: string | null, agentGroupId: string): string | undefined {
+  if (!inReplyTo) return undefined;
+  const suffix = `:${agentGroupId}`;
+  if (!inReplyTo.endsWith(suffix)) return undefined;
+  const id = inReplyTo.slice(0, -suffix.length);
+  return id.length > 0 ? id : undefined;
 }
 
 /**
