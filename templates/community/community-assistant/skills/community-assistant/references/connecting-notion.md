@@ -1,9 +1,10 @@
 # Connecting Notion
 
-Notion is this agent's one external credential: it holds the community's members, events, items,
-loans and requests. The `notion` MCP server ships with this plugin and starts on its own, but it
-starts **unauthenticated** — the real token comes from the credentials proxy at request time, so
-the first call fails until someone connects it.
+Notion is this agent's one external credential: it holds the community's sixteen databases — the
+roster, events, the lending library, help requests, and everything else. The `notion` MCP server
+ships with this plugin and starts on its own, but it starts **unauthenticated** — the real token
+comes from the credentials proxy at request time, so the first call fails until someone connects
+it.
 
 ## How to use this reference
 
@@ -20,10 +21,12 @@ error before you send anyone anywhere:
 
 | What you see | What it means | What to do |
 |--------------|---------------|------------|
-| `401`, `unauthorized`, `API token is invalid` | no credential in the vault yet (the server is sending its placeholder) | *Create the integration*, then *Connect it*, below |
+| `401`, `unauthorized`, `API token is invalid` | no credential in the vault yet (the server is sending its placeholder) | *Create the integration*, then *Get the setup link*, below |
 | `object_not_found` on a page or database you know exists | the token is fine; the integration just hasn't been given access to that page | *Sharing pages with the integration*, below |
 | `restricted_resource` | the integration's capabilities are too narrow | *Create the integration* — check read **and** write content are enabled |
 | `409`, `conflict_error` | someone edited the same page at the same moment | just retry once |
+| `object_not_found` on a **stored** page or data source ID that used to work | the ID is stale, or the page was moved or deleted | ask for the link to their copy again; never fall back to searching by title |
+| Everything resolves, but the rows look like another community's | you're bound to the wrong copy — the master template, or somebody else's duplicate | stop and have them confirm the link to *their* copy |
 
 ## Create the integration (once)
 
@@ -40,35 +43,60 @@ the workspace:
 5. Copy the **Internal Integration Token** (it starts `ntn_`). Treat it like a password: it goes
    into the credentials proxy, never into the group chat, and never to you in a message.
 
-## Connect it
+## Get the setup link (do this, don't guess a URL)
 
 The token belongs to the credentials proxy, which injects it into every call to `api.notion.com`.
-Two ways in, and the first is usually already done for you:
+You hand the user a link and they paste the token there — you never see it.
 
-- **From the error.** When a Notion call fails for want of a credential, the gateway's error
-  carries a **connect link** for that host. Hand them that link, they paste the token there, and
-  you retry the original call. Prefer this: the link is prefilled for the right host.
-- **Straight from the dashboard.** Otherwise the proxy's web UI is usually at
-  **http://127.0.0.1:10254** (the address is instance-configurable) — add a secret for host
-  `api.notion.com` with the token as a bearer credential.
+**The Notion tool's own error won't contain the link.** The MCP server makes that call in a
+sandbox of its own and reports back only that it failed. So ask the gateway yourself, from your
+shell — your shell *is* proxied, so this one line reaches the gateway and it answers with the
+link for this exact instance:
 
-Never ask them to paste the token to you, and never offer to put it in a file or an env var.
-Ground rule: you don't handle credential values.
+```bash
+curl -s https://api.notion.com/v1/users/me
+```
+
+With no credential in the vault, the gateway answers instead of Notion, with JSON carrying one of:
+
+| Field | Means | What to do |
+|-------|-------|------------|
+| `secret_url` | no credential for this host yet — **the normal case for Notion** | hand it over, after the fix below |
+| `connect_url` | the host is a first-class OAuth app | hand it over as-is |
+| `manage_url` | a credential exists but this agent can't use it | hand it over; it's an access grant, not a new token |
+
+**Fix `secret_url` before you send it.** It arrives pre-filled with a `path=` matching the request
+you just made (`/v1/users/me`), which would scope the credential to that one endpoint. Notion's
+tools call many paths (`/v1/search`, `/v1/pages`, `/v1/databases`…), so **blank the value after
+`path=`** and leave the rest of the URL untouched. Miss this and the connection appears to work,
+then fails on everything except the one endpoint you happened to probe — a confusing bug to chase
+later.
+
+If the command returns Notion's own error instead of gateway JSON, a credential already exists and
+the problem is something else — go back to the error table above.
+
+**If you get no JSON at all** (no gateway on the path), fall back to the dashboard: usually
+**http://127.0.0.1:10254**, where they add a secret for host `api.notion.com`. The address is
+instance-configurable, so prefer the URL the gateway gave you over this one every time.
+
+Never ask them to paste the token to you, never repeat it back, and never offer to put it in a
+file or an env var. Ground rule: you don't handle credential values.
 
 ## Sharing pages with the integration
 
 A fresh integration can see **nothing**, even with a perfect token — this is Notion's model, not a
 misconfiguration, and it's why a working token still returns `object_not_found`.
 
-Share the **one parent page** that holds the community's databases, and everything under it comes
-with it:
+Share the **page they duplicated the Louis template into**, and all sixteen databases under it
+come with it:
 
-1. Open the community's parent page in Notion.
+1. Open their copy of the Louis template page in Notion — the one in their own workspace, not the
+   published template they copied it from.
 2. **···** (top right) → **Connections** → **Connect to** → pick the integration by name.
 3. Confirm. Child pages and databases inherit, so this is one action, not one per database.
 
-If the databases don't exist yet, share an empty parent page first — then you can create them
-yourself (`notion-workspace.md`, *Creating them*) and they inherit the access.
+If they haven't duplicated the template yet, that has to happen before anything else — you never
+create the databases yourself (`community-onboarding.md`, *Bind to their copy of the template*).
 
 ## Remote box?
 
@@ -95,6 +123,10 @@ last step needs the tunnel.
 - **Wrong workspace**: an integration is bound to the workspace it was created in. If the
   community has more than one, a token from the wrong one reads as an empty, permission-less
   workspace. Have them check the workspace name on the integration page.
+- **Shared the wrong page**: they connected the integration to the published template, or to a
+  different copy. Everything then works and reads plausibly, which is the dangerous part. The
+  stored page ID in the community profile is the one you trust; if it doesn't match what they've
+  shared, stop and sort that out before writing anything.
 - **Writes fail, reads work**: the integration has read-only capabilities. Edit it and re-check
   update + insert.
 
