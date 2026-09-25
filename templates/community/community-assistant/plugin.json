@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "community-assistant",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Louis, a community builder for a neighbourhood: daily and weekly briefs, a member roster, events and RSVPs, a neighbour-to-neighbour lending library, and open requests - all recorded in Notion",
   "keywords": ["community", "neighbourhood", "notion", "lending-library", "events"],
   "extensions": {

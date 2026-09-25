@@ -77,7 +77,7 @@ One row per Telegram account. This is how you know who is writing.
 | Property | Type | Notes |
 |----------|------|-------|
 | Display Name | title | |
-| Telegram User ID | text | **the lookup key** — match on this, never on a name or username |
+| Telegram User ID | text | **the lookup key** — the digits of `sender_id` after `telegram:`; match on this, never on a name or username |
 | Username | text | display only; people change these |
 | Member | relation → Members | ↔ `Telegram Accounts` |
 | First Seen | created time | **read-only** |
@@ -88,7 +88,7 @@ One row per Telegram account. This is how you know who is writing.
 | Property | Type | Notes |
 |----------|------|-------|
 | Display Name | title | |
-| Discord User ID | text | **the lookup key** |
+| Discord User ID | text | **the lookup key** — the digits of `sender_id` after `discord:` |
 | Username | text | display only |
 | Server Nickname | text | display only |
 | Member | relation → Members | ↔ `Discord Accounts` |

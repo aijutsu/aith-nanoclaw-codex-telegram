@@ -244,8 +244,12 @@ function formatSingleChat(msg: MessageInRow): string {
   const appContextSuffix = formatAppContext(content.app_context);
 
   const fromAttr = originAttr(msg);
+  // Stable platform identity (`<channel>:<raw id>`), for agents that key
+  // records on who is speaking — display names are neither unique nor fixed.
+  const senderId = extractSenderId(msg, content);
+  const senderIdAttr = senderId ? ` sender_id="${escapeXml(senderId)}"` : '';
 
-  return `<message${idAttr}${fromAttr} sender="${escapeXml(sender)}" time="${escapeXml(time)}"${replyAttr}>${replyPrefix}${escapeXml(text)}${linksSuffix}${attachmentsSuffix}${appContextSuffix}</message>`;
+  return `<message${idAttr}${fromAttr} sender="${escapeXml(sender)}"${senderIdAttr} time="${escapeXml(time)}"${replyAttr}>${replyPrefix}${escapeXml(text)}${linksSuffix}${attachmentsSuffix}${appContextSuffix}</message>`;
 }
 
 /**

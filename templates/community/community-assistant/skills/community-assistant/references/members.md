@@ -15,8 +15,10 @@ account row per platform account, each pointing at one Members row. Properties a
 ## Who is this, actually
 
 Before anything else, resolve the sender. You match on their **platform user ID**, never on a name
-they typed or a display name: `Telegram User ID` in `Telegram Accounts`, `Discord User ID` in
-`Discord Accounts`, then follow `Member` to the Members row.
+they typed or a display name. It's the `sender_id` attribute on their message (`telegram:<id>` or
+`discord:<id>`; store and match the digits after the colon): `Telegram User ID` in
+`Telegram Accounts`, `Discord User ID` in `Discord Accounts`, then follow `Member` to the
+Members row. No `sender_id` means no lookup — see `permissions.md`.
 
 - **A new account** gets a Members row (`Membership Status` `New`, `Activity` `Active`) and an
   account row linked to it. Welcome them once, warmly and briefly. Don't interview them.
