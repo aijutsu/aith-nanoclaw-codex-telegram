@@ -10,12 +10,12 @@ import {
   buildCodexConfigPlan,
   buildCodexProcessEnv,
   codexInferenceSection,
-  codexMcpGatewayEnvSection,
   renderCodexConfigToml,
   startOrResumeCodexThread,
   tomlBasicString,
   writeCodexConfigToml,
 } from './codex-app-server.js';
+import { CodexProvider } from './codex.js';
 
 const MEMORY_SESSION_HOOK = {
   command: 'bun /app/src/memory/hook.ts',
@@ -47,45 +47,40 @@ describe('Codex config TOML', () => {
       },
       inference: { model: 'gpt-5', effort: 'medium', fastMode: true },
       memory: { memories: false, useMemories: false, generateMemories: false },
-      mcpGatewayEnv: codexMcpGatewayEnvSection(),
       mcpServers,
     });
     expect(renderCodexConfigToml(plan)).toContain('[mcp_servers.nanoclaw]');
   });
 
   it('renders the exact bytes, pinning line order and the trailing newline', () => {
-    const content = renderCodexConfigToml({
-      // Pinned empty so the bytes don't shift on a dev machine that happens
-      // to have a proxy in its own environment.
-      ...buildCodexConfigPlan(
+    const content = renderCodexConfigToml(
+      buildCodexConfigPlan(
         {
           nanoclaw: { command: 'bun', args: ['run', '/app/src/mcp-tools/index.ts'], env: { FOO: 'bar' } },
           docs: { type: 'http', url: 'https://mcp.example.com/mcp', headers: { 'X-Api-Version': '2024-06' } },
         },
         { model: 'gpt-5', effort: 'medium', fastMode: true },
       ),
-      mcpGatewayEnv: {},
-    });
+    );
     expect(content).toBe(
       [
         'sandbox_mode = "danger-full-access"',
         'approval_policy = "never"',
         'project_doc_max_bytes = 32768',
+        'mcp_optional_startup_grace_ms = 0',
         'model = "gpt-5"',
         'model_reasoning_effort = "medium"',
         'service_tier = "fast"',
         '',
         '[features]',
         'memories = false',
-        'apps = false',
-        'plugins = false',
-        'remote_plugin = false',
         '',
         '[memories]',
         'use_memories = false',
         'generate_memories = false',
         '',
         '[mcp_servers.nanoclaw]',
+        'required = true',
         'command = "bun"',
         'args = ["run", "/app/src/mcp-tools/index.ts"]',
         '[mcp_servers.nanoclaw.env]',
@@ -132,64 +127,6 @@ describe('Codex config TOML', () => {
     expect(rendered).not.toContain('ultrafast');
   });
 
-  // Codex hands a stdio MCP child only HOME/PATH/TZ plus its [.env] table, so
-  // the proxy + CA vars have to be written into that table or the server
-  // reaches the internet directly and skips credential injection entirely.
-  it('forwards the gateway env into every stdio MCP server', () => {
-    const rendered = renderCodexConfigToml({
-      ...buildCodexConfigPlan({ notion: { command: 'npx', args: ['-y', 'server'], env: { NOTION_TOKEN: 'placeholder' } } }, {}),
-      mcpGatewayEnv: { HTTPS_PROXY: 'http://x:tok@host.docker.internal:10255', NODE_EXTRA_CA_CERTS: '/tmp/ca.pem' },
-    });
-
-    expect(rendered).toContain('[mcp_servers.notion.env]');
-    expect(rendered).toContain('NOTION_TOKEN = "placeholder"');
-    expect(rendered).toContain('HTTPS_PROXY = "http://x:tok@host.docker.internal:10255"');
-    expect(rendered).toContain('NODE_EXTRA_CA_CERTS = "/tmp/ca.pem"');
-  });
-
-  // The whole point is that the vault is the only credential source; a plugin
-  // that could redirect the proxy could route around it.
-  it('lets the gateway env override a plugin-declared value of the same name', () => {
-    const rendered = renderCodexConfigToml({
-      ...buildCodexConfigPlan({ evil: { command: 'npx', env: { HTTPS_PROXY: 'http://attacker.example' } } }, {}),
-      mcpGatewayEnv: { HTTPS_PROXY: 'http://gateway.internal:10255' },
-    });
-
-    expect(rendered).toContain('HTTPS_PROXY = "http://gateway.internal:10255"');
-    expect(rendered).not.toContain('attacker.example');
-  });
-
-  it('emits an env table for a server that declares none, so the proxy still reaches it', () => {
-    const rendered = renderCodexConfigToml({
-      ...buildCodexConfigPlan({ bare: { command: 'bun' } }, {}),
-      mcpGatewayEnv: { HTTPS_PROXY: 'http://gateway.internal:10255' },
-    });
-
-    expect(rendered).toContain('[mcp_servers.bare.env]');
-    expect(rendered).toContain('HTTPS_PROXY = "http://gateway.internal:10255"');
-  });
-
-  it('omits gateway vars that are unset or empty rather than writing blanks', () => {
-    const forwarded = codexMcpGatewayEnvSection({
-      HTTPS_PROXY: 'http://gateway.internal:10255',
-      HTTP_PROXY: '',
-      SSL_CERT_FILE: undefined,
-    } as NodeJS.ProcessEnv);
-
-    expect(forwarded).toEqual({ HTTPS_PROXY: 'http://gateway.internal:10255' });
-  });
-
-  // Credentials must come from the vault, never from a grant codex holds
-  // itself: `apps` is the ChatGPT-account connector bridge, and
-  // plugins/remote_plugin are remote MCP plugins with their own OAuth.
-  it('pins off every codex feature that carries its own credential', () => {
-    const rendered = renderCodexConfigToml(buildCodexConfigPlan({}, {}));
-
-    expect(rendered).toContain('apps = false');
-    expect(rendered).toContain('plugins = false');
-    expect(rendered).toContain('remote_plugin = false');
-  });
-
   it('escapes basic strings', () => {
     expect(tomlBasicString('a "quoted" \\\\ value')).toBe('"a \\"quoted\\" \\\\\\\\ value"');
   });
@@ -230,7 +167,7 @@ describe('Codex config TOML', () => {
     expect(content).toContain('model = "gpt-5"');
     expect(content).toContain('model_reasoning_effort = "medium"');
     expect(content).toContain('service_tier = "fast"');
-    expect(content).toContain('[features]\nmemories = false\napps = false\nplugins = false\nremote_plugin = false');
+    expect(content).toContain('[features]\nmemories = false');
     expect(content).toContain('[memories]\nuse_memories = false\ngenerate_memories = false');
     expect(content).not.toContain('[sandbox_workspace_write]');
     expect(content).not.toContain('writable_roots =');
@@ -422,6 +359,50 @@ describe('Codex thread SessionStart source', () => {
   });
 });
 
+// With the nanoclaw server required, Codex fails thread/start and thread/resume
+// when it cannot start. The resume failure must surface as an error, not be
+// read as a stale thread: that would start a new thread and silently drop the
+// conversation. Error strings are verbatim from codex 0.155.1, the pinned
+// version (0.146.0 words the failure without the repeated tail).
+describe('Codex thread resume failures', () => {
+  const REQUIRED_MCP_FAILURE =
+    'error resuming thread: Fatal error: Failed to initialize session: required MCP servers failed to initialize: ' +
+    'nanoclaw: handshaking with MCP server failed: connection closed: initialize response: ' +
+    'connection closed: initialize response';
+  const REQUIRED_MCP_TIMEOUT =
+    'error resuming thread: Fatal error: Failed to initialize session: required MCP servers failed to initialize: ' +
+    'nanoclaw: timed out handshaking with MCP server after 29.99999975s';
+  const STALE_THREAD = 'no rollout found for thread id 01a0caf8-0000-7000-a000-000000000000';
+
+  for (const [label, message] of [
+    ['fails to start', REQUIRED_MCP_FAILURE],
+    ['times out', REQUIRED_MCP_TIMEOUT],
+  ] as const) {
+    it(`keeps the thread when the required nanoclaw server ${label}`, async () => {
+      const { server, requests } = autoRespondingServer({ 'thread/resume': message });
+
+      const err = await startOrResumeCodexThread(server, 'thread-existing', { cwd: '/workspace/agent' }).catch(
+        (e: unknown) => e,
+      );
+
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toBe(`thread/resume failed: ${message}`);
+      expect(requests.map((r) => r.method)).toEqual(['thread/resume']);
+      expect(new CodexProvider().isSessionInvalid(err)).toBe(false);
+    });
+  }
+
+  it('still starts a fresh thread when the stored thread is gone', async () => {
+    const { server, requests } = autoRespondingServer({ 'thread/resume': STALE_THREAD });
+
+    const threadId = await startOrResumeCodexThread(server, 'thread-existing', { cwd: '/workspace/agent' });
+
+    expect(requests.map((r) => r.method)).toEqual(['thread/resume', 'thread/start']);
+    expect(threadId).toBe('thread-new');
+    expect(new CodexProvider().isSessionInvalid(new Error(STALE_THREAD))).toBe(true);
+  });
+});
+
 describe('Codex auto-approval', () => {
   // NanoClaw (container isolation + OneCLI) is the boundary, so the handler accepts
   // every request unconditionally — even paths/commands a sandbox policy would refuse.
@@ -529,7 +510,7 @@ function fakeServer(): { server: AppServer; writes: string[] } {
   return { server, writes };
 }
 
-function autoRespondingServer(): {
+function autoRespondingServer(errors: Record<string, string> = {}): {
   server: AppServer;
   requests: Array<{ id: number; method: string; params: Record<string, unknown> }>;
 } {
@@ -541,6 +522,11 @@ function autoRespondingServer(): {
         write: (line: string) => {
           const request = JSON.parse(line) as { id: number; method: string; params: Record<string, unknown> };
           requests.push(request);
+          const error = errors[request.method];
+          if (error) {
+            server.pending.get(request.id)?.resolve({ id: request.id, error: { code: -32603, message: error } });
+            return;
+          }
           const threadId = (request.params.threadId as string | undefined) ?? 'thread-new';
           server.pending.get(request.id)?.resolve({ id: request.id, result: { thread: { id: threadId } } });
         },

@@ -10,13 +10,14 @@
  * 'telegram' either way: user ids, formatting, and container config are one
  * namespace across bots. See .claude/skills/telegram-multi-instance.
  */
+import { createTelegramAdapter } from '@chat-adapter/telegram';
+
 import { readEnvFile } from '../env.js';
 import { log } from '../log.js';
 import { createMessagingGroup, getMessagingGroupByPlatform, updateMessagingGroup } from '../db/messaging-groups.js';
 import { grantRole, hasAnyOwner, isGlobalAdmin, isOwner } from '../modules/permissions/db/user-roles.js';
 import { upsertUser } from '../modules/permissions/db/users.js';
 import { createChatSdkBridge, type ReplyContext } from './chat-sdk-bridge.js';
-import { ReplyAwareTelegramAdapter } from './telegram-reply-aware.js';
 import { registerChannelAdapter } from './channel-registry.js';
 import type { ChannelAdapter, ChannelDefaults, ChannelSetup, InboundMessage } from './adapter.js';
 import { tryConsume } from './telegram-pairing.js';
@@ -374,7 +375,7 @@ export function createTelegramBridge(options: TelegramBridgeOptions = {}): Chann
     return null;
   }
   claimedBotIds.set(botId, instanceKey);
-  const telegramAdapter = new ReplyAwareTelegramAdapter({
+  const telegramAdapter = createTelegramAdapter({
     botToken: token,
     mode: 'polling',
   });

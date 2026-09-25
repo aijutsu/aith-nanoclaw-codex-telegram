@@ -426,52 +426,6 @@ export function writeCodexConfigToml(
   );
 }
 
-/**
- * Codex features that would let the agent reach a third-party service with a
- * credential NanoClaw never issued and cannot revoke.
- *
- * `apps` is the Apps/Connectors bridge: an in-process MCP server named
- * `codex_apps` whose tools are authenticated SERVER-SIDE by the linked
- * ChatGPT account. The request leaves the container addressed to
- * chatgpt.com, so it carries the vaulted Codex credential, passes the
- * gateway, and OpenAI's backend then talks to the third party on its own
- * OAuth grant. No Notion/GitHub/Linear host is ever contacted from here,
- * which is exactly why no host-based rule or egress policy can see it.
- *
- * `plugins` / `remote_plugin` are the second door: a remote plugin ships its
- * own `.mcp.json` (the cached Notion one points at `https://mcp.notion.com/mcp`
- * with `oauth_resource`), authenticating against a grant the vault also never
- * issued.
- *
- * These are distinct from `[mcp_servers.*]` below, which is how NanoClaw
- * declares MCP servers; disabling the feature flags does not affect them.
- *
- * Verified against the pinned codex 0.146.0: all three are stage `stable`,
- * default `true`, and `codex features list -c features.apps=false` flips
- * `apps` to `false`. (`connectors` is a deprecated alias for `apps`.)
- */
-const CODEX_DISABLED_FEATURES = ['apps', 'plugins', 'remote_plugin'] as const;
-
-/**
- * Env the credentials proxy needs in a process for its traffic to be
- * intercepted and have credentials injected.
- *
- * Codex does NOT pass its own environment to the stdio MCP servers it spawns
- * — a child sees only HOME/PATH/TZ plus its `[mcp_servers.<name>.env]` table.
- * So without this forwarding an MCP server reaches the internet directly,
- * bypassing injection, approvals and audit, and any placeholder credential it
- * was given stays a placeholder on the wire.
- */
-const CODEX_MCP_GATEWAY_ENV = [
-  'HTTPS_PROXY',
-  'https_proxy',
-  'HTTP_PROXY',
-  'http_proxy',
-  'NODE_EXTRA_CA_CERTS',
-  'SSL_CERT_FILE',
-  'NODE_USE_ENV_PROXY',
-] as const;
-
 export interface CodexConfigPlan {
   executionPolicy: {
     sandboxMode: string;
@@ -480,8 +434,6 @@ export interface CodexConfigPlan {
   };
   inference: { model?: string; effort?: string; fastMode?: boolean };
   memory: { memories: false; useMemories: false; generateMemories: false };
-  /** Proxy + CA env forwarded into every stdio MCP server codex spawns. */
-  mcpGatewayEnv: Record<string, string>;
   mcpServers: Record<string, McpServerConfig>;
 }
 
@@ -521,16 +473,6 @@ export function codexMcpServersSection(input: Record<string, McpServerConfig>): 
   return input;
 }
 
-/** Read-through of the gateway env actually present; absent vars are omitted. */
-export function codexMcpGatewayEnvSection(source: NodeJS.ProcessEnv = process.env): CodexConfigPlan['mcpGatewayEnv'] {
-  const forwarded: Record<string, string> = {};
-  for (const key of CODEX_MCP_GATEWAY_ENV) {
-    const value = source[key];
-    if (typeof value === 'string' && value !== '') forwarded[key] = value;
-  }
-  return forwarded;
-}
-
 export function buildCodexConfigPlan(
   servers: Record<string, McpServerConfig>,
   opts: { model?: string; effort?: string; fastMode?: boolean } = {},
@@ -539,10 +481,14 @@ export function buildCodexConfigPlan(
     executionPolicy: codexExecutionPolicySection(),
     inference: opts,
     memory: codexMemorySection(),
-    mcpGatewayEnv: codexMcpGatewayEnvSection(),
     mcpServers: codexMcpServersSection(servers),
   };
 }
+
+// The built-in MCP server's key, set by the agent-runner entry point
+// (container/agent-runner/src/index.ts). It carries send_file, scheduling and
+// the rest of NanoClaw's tools, so a turn without it is a turn that cannot act.
+const NANOCLAW_MCP_SERVER = 'nanoclaw';
 
 export function renderCodexConfigToml(plan: CodexConfigPlan): string {
   // Instance-level defaults the app-server reads on startup; threads/turns inherit them.
@@ -550,6 +496,11 @@ export function renderCodexConfigToml(plan: CodexConfigPlan): string {
     `sandbox_mode = ${tomlBasicString(plan.executionPolicy.sandboxMode)}`,
     `approval_policy = ${tomlBasicString(plan.executionPolicy.approvalPolicy)}`,
     `project_doc_max_bytes = ${plan.executionPolicy.projectDocumentMaxBytes}`,
+    // Since 0.147.0 Codex gives MCP servers ~1s before the first turn and runs
+    // the turn without the tools of any server still starting. Every query
+    // spawns a fresh app-server, so every server starts cold. 0 restores the
+    // wait-until-ready behaviour, bounded by each server's startup timeout.
+    'mcp_optional_startup_grace_ms = 0',
   ];
   if (plan.inference.model) lines.push(`model = ${tomlBasicString(plan.inference.model)}`);
   if (plan.inference.effort) lines.push(`model_reasoning_effort = ${tomlBasicString(plan.inference.effort)}`);
@@ -557,12 +508,9 @@ export function renderCodexConfigToml(plan: CodexConfigPlan): string {
   lines.push('');
 
   // NanoClaw owns persistent memory across providers. Keep Codex's native
-  // memory disabled even if its defaults or a user-level config change. The
-  // credential-path features are pinned off for the same reason: the vault is
-  // the only credential source, so codex must not carry its own.
+  // memory disabled even if its defaults or a user-level config change.
   lines.push('[features]');
   lines.push(`memories = ${plan.memory.memories}`);
-  for (const feature of CODEX_DISABLED_FEATURES) lines.push(`${feature} = false`);
   lines.push('');
   lines.push('[memories]');
   lines.push(`use_memories = ${plan.memory.useMemories}`);
@@ -572,6 +520,9 @@ export function renderCodexConfigToml(plan: CodexConfigPlan): string {
   for (const [name, config] of Object.entries(plan.mcpServers)) {
     const tomlName = tomlKey(name);
     lines.push(`[mcp_servers.${tomlName}]`);
+    // Fail thread start/resume loudly if the built-in server cannot start,
+    // instead of running the turn without it. Other servers stay optional.
+    if (name === NANOCLAW_MCP_SERVER) lines.push('required = true');
     if (config.type === 'http') {
       lines.push(`url = ${tomlBasicString(config.url)}`);
       if (config.headers && Object.keys(config.headers).length > 0) {
@@ -595,12 +546,9 @@ export function renderCodexConfigToml(plan: CodexConfigPlan): string {
     if (config.args && config.args.length > 0) {
       lines.push(`args = [${config.args.map(tomlBasicString).join(', ')}]`);
     }
-    // Gateway env last: a plugin-declared HTTPS_PROXY must never shadow the
-    // real one, or the server routes around credential injection entirely.
-    const env = { ...config.env, ...plan.mcpGatewayEnv };
-    if (Object.keys(env).length > 0) {
+    if (config.env && Object.keys(config.env).length > 0) {
       lines.push(`[mcp_servers.${tomlName}.env]`);
-      for (const [key, value] of Object.entries(env)) {
+      for (const [key, value] of Object.entries(config.env)) {
         lines.push(`${tomlKey(key)} = ${tomlBasicString(value)}`);
       }
     }

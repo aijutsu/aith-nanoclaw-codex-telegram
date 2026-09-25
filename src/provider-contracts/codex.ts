@@ -5,6 +5,12 @@ import { registerProviderHostContract } from './registry.js';
 const HOST_SEAM_VERSION = 1;
 
 registerProviderHostContract('codex', {
+  modelEndpoints: {
+    api: 'https://api.openai.com',
+    subscription: 'https://chatgpt.com',
+    token: 'https://auth.openai.com/oauth/token',
+  },
+  modelDomains: ['openai.com', 'chatgpt.com'],
   seamVersion: HOST_SEAM_VERSION,
   projectDocument: {
     fileName: 'AGENTS.md',
