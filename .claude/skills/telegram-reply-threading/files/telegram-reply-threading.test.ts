@@ -18,7 +18,7 @@ import { createTelegramAdapter, type TelegramMessage } from '@chat-adapter/teleg
 import type { AdapterPostableMessage } from 'chat';
 
 import { createChatSdkBridge, type PostableReplyTarget } from './chat-sdk-bridge.js';
-import { ReplyAwareTelegramAdapter, upgradeToReplyAware } from './telegram-reply-aware.js';
+import { ReplyAwareTelegramAdapter, takeAnnouncement, upgradeToReplyAware } from './telegram-reply-aware.js';
 
 /** What the chat-sdk bridge hands the adapter for a plain text reply. */
 function postable(markdown: string, replyToMessageId?: string): AdapterPostableMessage {
@@ -199,6 +199,64 @@ describe('force-reply: the person answered replies to the bot by default', () =>
 
     expect(sentPayload(fetchMock).reply_markup).toEqual(keyboard);
     expect(sentPayload(fetchMock).reply_parameters).toEqual({ message_id: 11, allow_sending_without_reply: true });
+  });
+});
+
+/** The Bot API method each fetch call hit, in order. */
+function methods(fetchMock: ReturnType<typeof stubSendMessage>): string[] {
+  return fetchMock.mock.calls.map((c) => String(c[0]).split('/').pop() ?? '');
+}
+
+describe('announcements: standalone and pinned', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('sends without a quote or force-reply, strips the marker, then pins the sent message', async () => {
+    const fetchMock = stubSendMessage();
+    await new TestAdapter().postMessage(GROUP, postable('<announce/>\nBlock clean-up — 3 October', '-1001234:11'));
+
+    expect(methods(fetchMock)).toEqual(['sendMessage', 'pinChatMessage']);
+    const sent = sentPayload(fetchMock);
+    expect(sent).not.toHaveProperty('reply_parameters');
+    expect(sent).not.toHaveProperty('reply_markup');
+    expect(String(sent.text)).not.toContain('announce');
+    expect(String(sent.text)).toContain('3 October');
+    expect(sentPayload(fetchMock, 1)).toMatchObject({ chat_id: '-1001234', message_id: 99 });
+  });
+
+  it('still delivers when pinning fails (bot lacks the pin right)', async () => {
+    const fetchMock = stubSendMessage();
+    fetchMock.mockImplementation(async (input: unknown) =>
+      String(input).endsWith('/pinChatMessage')
+        ? new Response(JSON.stringify({ ok: false, error_code: 400, description: 'not enough rights' }), {
+            status: 400,
+          })
+        : new Response(
+            JSON.stringify({
+              ok: true,
+              result: { message_id: 99, chat: { id: -1001234, type: 'supergroup' }, date: 1_700_000_100, text: 'ok' },
+            }),
+            { status: 200 },
+          ),
+    );
+    const sent = await new TestAdapter().postMessage(GROUP, postable('<announce/> Market day'));
+
+    expect(sent.id).toBeTruthy();
+    expect(methods(fetchMock)).toEqual(['sendMessage', 'pinChatMessage']);
+  });
+
+  it('leaves ordinary replies alone, and a marker mid-text is not an announcement', async () => {
+    const fetchMock = stubSendMessage();
+    await new TestAdapter().postMessage(GROUP, postable('use <announce/> to pin', '-1001234:11'));
+
+    expect(methods(fetchMock)).toEqual(['sendMessage']);
+    expect(sentPayload(fetchMock).reply_parameters).toBeDefined();
+  });
+
+  it('recognises the marker on every text-bearing postable shape', () => {
+    expect(takeAnnouncement('<announce/>hi')).toBe('hi');
+    expect(takeAnnouncement({ raw: '<announce />hi' } as AdapterPostableMessage)).toEqual({ raw: 'hi' });
+    expect(takeAnnouncement(postable('<ANNOUNCE/> hi', '-1001234:11'))).toEqual({ markdown: 'hi' });
+    expect(takeAnnouncement(postable('hi'))).toBeUndefined();
   });
 });
 

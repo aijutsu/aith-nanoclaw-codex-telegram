@@ -98,8 +98,9 @@ everything else, captured the first time it comes up, never interviewed for.
   numbers now, or shall I add them as they come up?" Either answer is fine; take the second
   cheerfully (ground rule 15, *Seed light*). Never turn this into data entry.
 - **The standard briefings**: the daily brief (default 7:00 daily) and the week-ahead (default
-  Sunday 18:00), both come as standard. Name both with their defaults in **one message** and ask a
-  single question — keep these or change either? — then resume each (leave a declined one paused).
+  Sunday 18:00), both come as standard and are already on. Name both with their defaults in **one
+  message** and ask a single question — keep these or change either? — then update any changed
+  schedule (and pause a declined one).
   Stating two defaults together is one confirmation, so this stays within one-question-per-message.
   Say plainly that agreeing a time means those routine posts go out without asking each morning,
   and that anything else still gets checked with them first.

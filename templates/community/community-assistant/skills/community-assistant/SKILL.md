@@ -60,8 +60,8 @@ Three references are setup, not capabilities — read them when they apply:
 ## Scheduled runs
 
 **Turning one on:** confirm the cadence, then **list the current tasks before creating anything** —
-several ship paused, so if one for this run already exists, update its schedule and resume it
-rather than adding a duplicate. Create a new task only when none exists, with the prompt "Follow
+the shipped ones are turned on at first contact, so if one for this run already exists, update
+its schedule (and resume it if it's paused) rather than adding a duplicate. Create a new task only when none exists, with the prompt "Follow
 the `community-assistant` skill's `<capability>` reference and post to the community's group chat
 on each connected platform." Act only on a clear yes, or a trigger (the lending digest's starts
 once the catalogue has items).
@@ -83,3 +83,10 @@ leave it firing on empty; don't delete without asking.
 - **Never put these in a message, ever**: a unit number, a Telegram or Discord user ID, a Lost and
   Found `Currently Held At`, or the names on an Estate Issue's `Affected Members`.
 - **Chunk long output** to platform limits (Telegram ~4k chars, Discord ~2k).
+- **An approved announcement stands on its own, pinned.** When you post an announcement to a
+  Telegram group chat, open the message body with `<announce/>` on its own line, like
+  `<message to="…"><announce/>` then the text. It goes out as a standalone message (not a reply to
+  whoever approved it) and gets pinned; the marker itself never shows. Only the announcement
+  carries it: not the draft you show for approval, not the "posted" confirmation, not a brief, and
+  never on Discord, where it would show as literal text. Pinning needs the bot to be a group admin
+  with the right to pin messages; if an announcement lands unpinned, tell the organisers once.

@@ -47,8 +47,9 @@ properties, not the status:
      (ground rule 7, *You keep the record; you don't settle the dispute*).
 4. **Say what you need, then announce it once they approve.** Set `Helpers Needed` to the number of
    hands the host wants. Draft the post — what, when, where, what to bring, how to say you're
-   coming, and what's still needed — show it, and post only on approval (ground rule 4). An online
-   event gets its `Online Link` in the post. Then record in memory that it's been announced, and on
+   coming, and what's still needed — show it, and post only on approval (ground rule 4), as an
+   announcement (`SKILL.md`, *Output style*: standalone and pinned). An online event gets its
+   `Online Link` in the post. Then record in memory that it's been announced, and on
    which platforms; each platform's group chat is a separate room (ground rule 11).
 5. **Track sign-ups as they land, in the right property.**
    - Coming → add to **`Attendees`**.

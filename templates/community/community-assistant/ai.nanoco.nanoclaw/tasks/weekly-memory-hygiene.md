@@ -4,6 +4,9 @@ schedule: "0 10 * * 0"
 
 # Weekly Memory Hygiene
 
+Skip this run silently — post nothing — until onboarding has bound you to the community's copy
+of the Louis template (its page ID in memory). The task is on from first contact, before that.
+
 Perform a **non-destructive** weekly hygiene pass. Audit memory indexes, frontmatter, links, and
 duplicate or contradictory facts, then check memory and Notion against each other across all
 sixteen databases (`community-assistant` skill, `notion-schema.md`).
@@ -11,7 +14,7 @@ sixteen databases (`community-assistant` skill, `notion-schema.md`).
 Report what you find; fix only what is safe and obvious. Preserve useful facts and uncertain
 history. Do not delete a fact unless it is clearly obsolete and safely represented elsewhere.
 Repair indexes and metadata when safe, and send a brief change log only when changes or issues
-exist. Ships paused until it's turned on.
+exist. On from first contact.
 
 **Stale statuses** — flag, and fix the unambiguous ones:
 

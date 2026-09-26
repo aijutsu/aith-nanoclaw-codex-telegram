@@ -43,7 +43,7 @@ community-assistant/
 ├── ai.nanoco.nanoclaw/
 │   ├── context/
 │   │   └── instructions.md           # Louis's persona + the 15 ground rules
-│   └── tasks/                        # shipped tasks, each created PAUSED
+│   └── tasks/                        # shipped tasks; stamped paused, resumed at first contact
 │       ├── daily-brief.md
 │       ├── weekly-week-ahead.md
 │       └── weekly-memory-hygiene.md
@@ -192,11 +192,12 @@ to the chats you want it to post into; anywhere it should only read for context,
 
 ## Recurring tasks
 
-Three tasks ship in `ai.nanoco.nanoclaw/tasks/`, each **created paused** (the engine stamps every
-template task paused): the **daily brief** and **week-ahead** come as standard, so at onboarding the
-agent confirms their times, updates the schedules, and resumes them; **memory hygiene** is a
-non-destructive weekly audit that stays paused, but the agent **actively recommends activating** it
-during onboarding.
+Three tasks ship in `ai.nanoco.nanoclaw/tasks/`: the **daily brief**, the **week-ahead**, and
+**memory hygiene** (a non-destructive weekly audit). The engine stamps every template task paused,
+so the `welcome` skill **resumes all three at first contact**, before the agent's first message.
+Each run skips itself silently until onboarding has bound the agent to the community's copy, so
+nothing posts early; at onboarding the agent confirms the brief times, updates the schedules, and
+pauses any run the community declines.
 
 Agreeing a brief schedule is standing approval for **those routine posts only** — anything else the
 run turns up, such as a nudge aimed at a named neighbour, still gets drafted and confirmed first.

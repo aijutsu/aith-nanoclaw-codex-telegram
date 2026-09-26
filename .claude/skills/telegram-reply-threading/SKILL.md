@@ -1,6 +1,6 @@
 ---
 name: telegram-reply-threading
-description: Make a Telegram bot quote the message it is answering, open that person's reply box on its answer (force-reply), and hear replies to its own messages. Use when the bot ignores replies to its answers in a group (engage_mode 'mention'), when its replies land as loose messages with no visible target, or after an upstream update touches src/delivery.ts, src/channels/chat-sdk-bridge.ts, src/channels/adapter.ts or src/channels/channel-registry.ts.
+description: Make a Telegram bot quote the message it is answering, open that person's reply box on its answer (force-reply), and hear replies to its own messages; an agent-marked announcement (`<announce/>`) goes out standalone instead, and gets pinned. Use when the bot ignores replies to its answers in a group (engage_mode 'mention'), when its replies land as loose messages with no visible target, or after an upstream update touches src/delivery.ts, src/channels/chat-sdk-bridge.ts, src/channels/adapter.ts or src/channels/channel-registry.ts.
 ---
 
 # Telegram reply threading
@@ -91,6 +91,15 @@ group sees nothing. It never displaces markup the send already carries (an
 inline keyboard on a question or approval card), and unquoted sends (DMs,
 scheduled posts) never get it. To turn force-reply off and keep quoting,
 delete the two `FORCE_REPLY` uses in `foldReplyParameters`.
+
+**Announcements** skip all of that. An agent that opens a message body with
+`<announce/>` (case-insensitive, leading only) gets it sent standalone: the
+marker is stripped and `replyToMessageId` dropped, so there is no quote and no
+force-reply. The sent message is then pinned with `pinChatMessage`. Pinning
+needs the bot to be a group admin with the "pin messages" right; a failed pin
+logs a warning and never fails the delivery. The marker is Telegram-only:
+other adapters would show it literally, so an agent's instructions must use it
+only for Telegram destinations (the community-assistant template does).
 
 `upgradeToReplyAware(adapter)` at the bottom of the module re-prototypes a
 vendor-built `TelegramAdapter` into a `ReplyAwareTelegramAdapter` in place,
@@ -194,7 +203,7 @@ cp "${CLAUDE_SKILL_DIR}/files/delivery-reply-target.test.ts" src/delivery-reply-
 Both live at paths upstream does not own, so they survive the merge that breaks
 the wiring and fail instead of being clobbered alongside it. The Telegram one
 drives the real adapter against a stubbed `fetch` and asserts on the actual Bot
-API payload (quote, force-reply, markup preserved). Its wiring cases build the
+API payload (quote, force-reply, markup preserved, announcement unquoted then pinned). Its wiring cases build the
 adapter with the vendor's own `createTelegramAdapter`, exactly as `telegram.ts`
 does, and pass it through `createChatSdkBridge`, so losing step 2 turns them
 red.
@@ -220,7 +229,8 @@ In a group the bot is wired to: `@`-mention it once. Its answer should be
 visibly attached to your message, and your reply box should open on it. Type a
 follow-up without mentioning it: it should answer again. Others in the group
 should see no reply prompt. In a DM the answer should carry no quote and no
-reply prompt.
+reply prompt. Ask the agent to post an announcement: it should land as a loose
+message with no quote, and be pinned.
 
 ## Troubleshooting
 
@@ -234,6 +244,8 @@ reply prompt.
 | Bot answers but never quotes | it's a DM (by design), or `in_reply_to` was NULL | check `messages_out.in_reply_to` in the session's `outbound.db` |
 | Quotes the wrong message in a busy group | two agents delivering into one chat interleaved | cosmetic; documented on `pendingReplyTargets` |
 | Replies to a *different* bot's message engage ours | shouldn't — ids are compared, not the `is_bot` flag alone | check `_botUserId`; file a bug with the raw update |
+| Announcement posts but isn't pinned | bot isn't a group admin with "pin messages" | grant it in the group's admin settings; the host log has the warning |
+| `<announce/>` shows in the chat | marker not at the very start of the body, or sent to a non-Telegram channel | the agent must open the body with it, Telegram only |
 | Delivery failures after applying | an adapter treating the target as load-bearing | it is advisory at every hop — find the consumer that throws |
 
 ## Scope

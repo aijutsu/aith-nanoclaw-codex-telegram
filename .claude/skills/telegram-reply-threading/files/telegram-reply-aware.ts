@@ -8,6 +8,7 @@
 import { TelegramAdapter, type TelegramMessage } from '@chat-adapter/telegram';
 import type { Adapter, AdapterPostableMessage } from 'chat';
 
+import { log } from '../log.js';
 import type { PostableReplyTarget } from './chat-sdk-bridge.js';
 
 /**
@@ -25,6 +26,34 @@ interface TelegramReplyFields {
  * @see https://core.telegram.org/bots/api#forcereply
  */
 const FORCE_REPLY = { force_reply: true, selective: true } as const;
+
+/**
+ * Announcement marker: an agent opens a message body with `<announce/>` to
+ * post it as a standalone message (no quote, no force-reply) and pin it.
+ * Stripped before sending, so it never reaches the chat.
+ */
+const ANNOUNCE_MARKER = /^\s*<announce\s*\/?>\s*/i;
+
+/**
+ * The postable with its leading announcement marker removed, or undefined when
+ * it carries none. Drops `replyToMessageId` too: an announcement is addressed
+ * to the group, not an answer to whoever approved it.
+ */
+export function takeAnnouncement(message: AdapterPostableMessage): AdapterPostableMessage | undefined {
+  if (typeof message === 'string') {
+    return ANNOUNCE_MARKER.test(message) ? message.replace(ANNOUNCE_MARKER, '') : undefined;
+  }
+  if (!message || typeof message !== 'object') return undefined;
+  const fields = message as unknown as Record<string, unknown>;
+  for (const key of ['markdown', 'raw', 'text']) {
+    const value = fields[key];
+    if (typeof value !== 'string') continue;
+    if (!ANNOUNCE_MARKER.test(value)) return undefined;
+    const { replyToMessageId: _dropped, ...rest } = fields;
+    return { ...rest, [key]: value.replace(ANNOUNCE_MARKER, '') } as unknown as AdapterPostableMessage;
+  }
+  return undefined;
+}
 
 /** Bot API send methods never carry a reply; excluded from the fold below. */
 const NON_REPLY_SEND_METHODS = new Set(['sendChatAction']);
@@ -71,6 +100,12 @@ export class ReplyAwareTelegramAdapter extends TelegramAdapter {
   }
 
   async postMessage(threadId: string, message: AdapterPostableMessage) {
+    const announcement = takeAnnouncement(message);
+    if (announcement !== undefined) {
+      const sent = await super.postMessage(threadId, announcement);
+      await this.pinAnnouncement(threadId, sent.id);
+      return sent;
+    }
     const target = this.replyTarget(threadId, message);
     if (target === undefined) return super.postMessage(threadId, message);
     const { chatId } = this.resolveThreadId(threadId);
@@ -91,6 +126,24 @@ export class ReplyAwareTelegramAdapter extends TelegramAdapter {
     request?: { signal?: AbortSignal },
   ): Promise<TResult> {
     return super.telegramFetch<TResult>(method, this.foldReplyParameters(method, payload), request);
+  }
+
+  /**
+   * Pin a just-sent announcement. The bot needs the group's "pin messages"
+   * admin right; without it the message still stands, only unpinned, so a
+   * failure is logged and never fails the delivery.
+   */
+  private async pinAnnouncement(threadId: string, sentId: string): Promise<void> {
+    try {
+      const { chatId } = this.resolveThreadId(threadId);
+      const { messageId } = this.decodeCompositeMessageId(sentId, chatId);
+      await this.telegramFetch('pinChatMessage', { chat_id: chatId, message_id: messageId });
+    } catch (err) {
+      log.warn('Telegram announcement sent but not pinned (does the bot have the pin-messages admin right?)', {
+        threadId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** The quoted message's author is this bot. Service messages (a forum
