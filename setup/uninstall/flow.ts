@@ -23,6 +23,7 @@ import k from 'kleur';
 import { emit as phEmit } from '../lib/diagnostics.js';
 import { note } from '../lib/theme.js';
 import * as setupLog from '../logs.js';
+import { oneCliFound, oneCliNotes, oneCliRows, purgeOneCli, scanOneCli } from './onecli-purge.js';
 import { buildRemovalPlan, type Decisions } from './plan.js';
 import { executePlan, type ExecDeps } from './remove.js';
 import { scanInstall, tilde, type Inventory, type RunCommand } from './scan.js';
@@ -42,6 +43,12 @@ const GROUPS = {
     title: "3) Your agents' memory & files",
     desc: 'Notes and memory your agents created (groups/) and any migrated data (store/). Content you made — it cannot be recovered after deletion.',
     prompt: "Delete your agents' memory & files shown above? (cannot be undone)",
+  },
+  // Fork: onecli-full-uninstall skill.
+  onecli: {
+    title: '4) OneCLI gateway & vault',
+    desc: 'The local OneCLI app and every secret in its vault (ChatGPT login, Notion and other tokens), its agents and rules. Shared by every NanoClaw copy on this machine — they stop working until OneCLI is set up again.',
+    prompt: 'Delete OneCLI and everything in its vault shown above? (cannot be undone)',
   },
 } as const;
 
@@ -81,12 +88,16 @@ export async function runUninstallFlow(opts: {
     platform: process.platform,
     runCommand,
   });
+  // Fork: onecli-full-uninstall skill.
+  const onecli = scanOneCli({ home, runCommand, runtime: inv.containerRuntime });
+  inv.notes.push(...oneCliNotes(onecli));
   spinner.stop(`Scanned copy ${inv.slug} at ${tilde(projectRoot, home)}.`);
 
   const svcRows = serviceRows(inv, home);
   const dataRows = [...inv.data, ...inv.runtime].map(({ what, where }) => ({ what, where }));
   const userRows = inv.user.map(({ what, where }) => ({ what, where }));
-  const totalFound = svcRows.length + dataRows.length + userRows.length;
+  const onecliRows = oneCliFound(onecli) ? oneCliRows(onecli, (p) => tilde(p, home)) : [];
+  const totalFound = svcRows.length + dataRows.length + userRows.length + onecliRows.length;
 
   if (totalFound === 0) {
     p.outro(
@@ -101,6 +112,7 @@ export async function runUninstallFlow(opts: {
     if (svcRows.length > 0) note(groupBody(GROUPS.service.desc, svcRows), GROUPS.service.title);
     if (dataRows.length > 0) note(groupBody(GROUPS.data.desc, dataRows), GROUPS.data.title);
     if (userRows.length > 0) note(groupBody(GROUPS.user.desc, userRows), GROUPS.user.title);
+    if (onecliRows.length > 0) note(groupBody(GROUPS.onecli.desc, onecliRows), GROUPS.onecli.title);
     const empty = emptyGroupTitles(svcRows.length, dataRows.length, userRows.length);
     if (empty.length > 0) p.log.message(k.dim(`Nothing found for: ${empty.join(', ')}`));
     for (const n of inv.notes) p.log.message(k.dim(`• ${n}`));
@@ -138,10 +150,17 @@ export async function runUninstallFlow(opts: {
     userYes = await confirmGroup(GROUPS.user.prompt, yes);
   }
 
+  let onecliYes = false;
+  if (onecliRows.length > 0) {
+    note(groupBody(GROUPS.onecli.desc, onecliRows), GROUPS.onecli.title);
+    onecliYes = await confirmGroup(GROUPS.onecli.prompt, yes);
+  }
+
   const keptNotes: string[] = [];
   if (!serviceYes && svcRows.length > 0) keptNotes.push(`${GROUPS.service.title}: kept by your choice.`);
   if (!dataYes && dataRows.length > 0) keptNotes.push(`${GROUPS.data.title}: kept by your choice.`);
   if (!userYes && userRows.length > 0) keptNotes.push(`${GROUPS.user.title}: kept by your choice.`);
+  if (!onecliYes && onecliRows.length > 0) keptNotes.push(`${GROUPS.onecli.title}: kept by your choice.`);
 
   // Record the decisions before execution can delete logs/ — but only into
   // an existing logs/ (userInput would otherwise mkdir it back into
@@ -153,6 +172,7 @@ export async function runUninstallFlow(opts: {
         service: serviceYes,
         data: dataYes,
         user: userYes,
+        onecli: onecliYes,
       }),
     );
   }
@@ -164,7 +184,7 @@ export async function runUninstallFlow(opts: {
   };
   const actions = buildRemovalPlan(inv, decisions);
 
-  if (actions.length === 0) {
+  if (actions.length === 0 && !onecliYes) {
     printLeftAlone([...inv.notes, ...keptNotes]);
     p.outro('Nothing selected — nothing was changed.');
     process.exit(0);
@@ -193,8 +213,11 @@ export async function runUninstallFlow(opts: {
     isRoot: process.getuid?.() === 0,
   };
   const { notes: execNotes } = executePlan(head, deps);
+  // After the service stop in `head`, so the host can't respawn containers
+  // against the gateway mid-purge. Before the runtime tail: it logs via clack.
+  if (onecliYes) execNotes.push(...purgeOneCli(onecli, deps).notes);
 
-  printLeftAlone([...inv.notes, ...keptNotes, ...execNotes]);
+  printLeftAlone([...inv.notes, ...keptNotes, ...execNotes], onecliYes);
 
   const { notes: tailNotes } = executePlan(tail, {
     ...deps,
@@ -249,9 +272,9 @@ function emptyGroupTitles(svcCount: number, dataCount: number, userCount: number
   return empty;
 }
 
-function printLeftAlone(notes: string[]): void {
+function printLeftAlone(notes: string[], gatewayPurged = false): void {
   const lines = [
-    '• Shared gateway applications and credentials',
+    ...(gatewayPurged ? [] : ['• Shared gateway applications and credentials']),
     '• Host-wide config: ~/.config/nanoclaw/ (mount/sender allowlists)',
     '• PATH line in ~/.bashrc and ~/.zshrc',
     '• Other NanoClaw copies on this machine',
