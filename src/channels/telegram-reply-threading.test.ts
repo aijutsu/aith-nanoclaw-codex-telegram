@@ -14,11 +14,11 @@
  * failed delivery, and that DMs never quote.
  */
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import type { TelegramMessage } from '@chat-adapter/telegram';
+import { createTelegramAdapter, type TelegramMessage } from '@chat-adapter/telegram';
 import type { AdapterPostableMessage } from 'chat';
 
-import type { PostableReplyTarget } from './chat-sdk-bridge.js';
-import { ReplyAwareTelegramAdapter } from './telegram-reply-aware.js';
+import { createChatSdkBridge, type PostableReplyTarget } from './chat-sdk-bridge.js';
+import { ReplyAwareTelegramAdapter, upgradeToReplyAware } from './telegram-reply-aware.js';
 
 /** What the chat-sdk bridge hands the adapter for a plain text reply. */
 function postable(markdown: string, replyToMessageId?: string): AdapterPostableMessage {
@@ -36,6 +36,15 @@ class TestAdapter extends ReplyAwareTelegramAdapter {
   constructor(botUserId: string | null = BOT_ID) {
     super({ botToken: 'test-token', userName: 'nanoclaw_bot', mode: 'polling' });
     this._botUserId = botUserId ?? undefined;
+  }
+
+  /** Drive the payload fold directly, as the vendor's upload path would. */
+  async sendWithTarget(payload: Record<string, unknown>, target: number): Promise<void> {
+    (this as unknown as { pendingReplyTargets: Map<string, number> }).pendingReplyTargets.set(
+      String(payload.chat_id),
+      target,
+    );
+    await this.telegramFetch('sendMessage', payload);
   }
 
   mentioned(message: Record<string, unknown>): boolean {
@@ -160,5 +169,62 @@ describe('outbound: quoting the message being answered', () => {
 
     expect(sentPayload(fetchMock, 0)).not.toHaveProperty('reply_parameters');
     expect(sentPayload(fetchMock, 1).reply_parameters).toEqual({ message_id: 11, allow_sending_without_reply: true });
+  });
+});
+
+describe('force-reply: the person answered replies to the bot by default', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('asks only the person being answered to reply, on a quoted group answer', async () => {
+    const fetchMock = stubSendMessage();
+    await new TestAdapter().postMessage(GROUP, postable('Tuesday works', '-1001234:11'));
+
+    expect(sentPayload(fetchMock).reply_markup).toEqual({ force_reply: true, selective: true });
+  });
+
+  it('never forces a reply on unquoted sends (DMs, scheduled posts)', async () => {
+    const fetchMock = stubSendMessage();
+    const adapter = new TestAdapter();
+    await adapter.postMessage(DM, postable('Tuesday works', '6037840640:11'));
+    await adapter.postMessage(GROUP, postable('scheduled digest'));
+
+    expect(sentPayload(fetchMock, 0)).not.toHaveProperty('reply_markup');
+    expect(sentPayload(fetchMock, 1)).not.toHaveProperty('reply_markup');
+  });
+
+  it('never displaces markup the send already carries', async () => {
+    const fetchMock = stubSendMessage();
+    const keyboard = { inline_keyboard: [[{ text: 'Yes', callback_data: 'y' }]] };
+    await new TestAdapter().sendWithTarget({ chat_id: '-1001234', text: 'Approve?', reply_markup: keyboard }, 11);
+
+    expect(sentPayload(fetchMock).reply_markup).toEqual(keyboard);
+    expect(sentPayload(fetchMock).reply_parameters).toEqual({ message_id: 11, allow_sending_without_reply: true });
+  });
+});
+
+// telegram.ts is reinstalled from the channels branch on every update, so the
+// wiring lives in the chat-sdk bridge. These fail if that hook is lost.
+describe('wiring: the bridge upgrades a vendor-built adapter', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('turns the adapter telegram.ts builds into a reply-aware one', () => {
+    const adapter = createTelegramAdapter({ botToken: 'test-token', mode: 'polling' });
+    createChatSdkBridge({ adapter, supportsThreads: false });
+
+    expect(adapter).toBeInstanceOf(ReplyAwareTelegramAdapter);
+  });
+
+  it('an upgraded instance quotes and forces a reply like a constructed one', async () => {
+    const fetchMock = stubSendMessage();
+    const adapter = upgradeToReplyAware(createTelegramAdapter({ botToken: 'test-token', mode: 'polling' }));
+    await adapter.postMessage(GROUP, postable('Tuesday works', '-1001234:11'));
+
+    expect(sentPayload(fetchMock).reply_parameters).toEqual({ message_id: 11, allow_sending_without_reply: true });
+    expect(sentPayload(fetchMock).reply_markup).toEqual({ force_reply: true, selective: true });
+  });
+
+  it('leaves non-Telegram adapters alone', () => {
+    const other = { name: 'slack' } as unknown as Parameters<typeof upgradeToReplyAware>[0];
+    expect(Object.getPrototypeOf(upgradeToReplyAware(other))).toBe(Object.prototype);
   });
 });

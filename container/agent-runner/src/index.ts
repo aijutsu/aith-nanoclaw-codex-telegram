@@ -43,6 +43,7 @@ import { getProviderRuntimeContract, requireProviderName } from './providers/pro
 import { resolvePluginServer } from './plugin-mcp.js';
 import { registerProviderMemorySessionHook } from './provider-contracts/realize.js';
 import type { McpServerConfig } from './providers/types.js';
+import { withMcpGatewayEnv } from './mcp-gateway-env.js';
 import { runPollLoop } from './poll-loop.js';
 
 function log(msg: string): void {
@@ -116,7 +117,8 @@ async function main(): Promise<void> {
 
   const provider = createProvider(providerName, {
     assistantName: config.assistantName || undefined,
-    mcpServers,
+    // Fork: codex-credential-lockdown — route codex's MCP servers through the gateway.
+    mcpServers: withMcpGatewayEnv(providerName, mcpServers),
     env: { ...process.env },
     additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
     model: config.model,

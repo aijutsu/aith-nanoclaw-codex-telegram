@@ -28,6 +28,7 @@ import { normalizeOptions, type NormalizedOption } from './ask-question.js';
 import type { ChannelAdapter, ChannelDefaults, ChannelSetup, InboundMessage } from './adapter.js';
 import { INSTANCE_KEY_RE } from './channel-registry.js';
 import { resolveQuestionRender, dispatchQuestionAction } from './question-render-registry.js';
+import { upgradeToReplyAware } from './telegram-reply-aware.js';
 
 /** Adapter with optional gateway support (e.g., Discord). */
 interface GatewayAdapter extends Adapter {
@@ -473,7 +474,8 @@ export function appendRawText(
 }
 
 export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter {
-  const { adapter } = config;
+  // Fork: telegram-reply-threading — upgrade the vendor adapter in place.
+  const adapter = upgradeToReplyAware(config.adapter);
   // The instance name becomes a webhook route segment (the route regex is
   // [^/?]+) and ':' is the state-namespace delimiter — reject anything that
   // would break either, at construction time rather than at first webhook.

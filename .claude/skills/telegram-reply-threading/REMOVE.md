@@ -5,22 +5,20 @@ depends on it — but the bot goes back to ignoring replies to its own messages
 in groups, so people have to `@`-mention it on every turn.
 
 If the goal is only to stop the **quoting** and keep the bot hearing replies,
-do step 4 alone and leave the rest in place.
+do step 3 alone and leave the rest in place: with no reply target reaching the
+adapter it never quotes (or prompts), and it still hears replies. To stop only
+the **reply prompt** (force-reply), delete the two `FORCE_REPLY` uses in
+`foldReplyParameters` in `src/channels/telegram-reply-aware.ts` and keep
+everything else.
 
-1. **Revert the reach-in** in `src/channels/telegram.ts`:
+1. **Revert the bridge hook** in `src/channels/chat-sdk-bridge.ts`: drop the
+   `./telegram-reply-aware.js` import, and in `createChatSdkBridge` restore
 
    ```ts
-   import { createTelegramAdapter } from '@chat-adapter/telegram';
+   const { adapter } = config;
    ```
 
-   ```ts
-   const telegramAdapter = createTelegramAdapter({
-     botToken: token,
-     mode: 'polling',
-   });
-   ```
-
-   and drop the `./telegram-reply-aware.js` import.
+   `src/channels/telegram.ts` needs nothing; this skill never edits it.
 
 2. **Delete the subclass and its tests.**
 

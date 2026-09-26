@@ -1,6 +1,6 @@
 ---
 name: telegram-reply-threading
-description: Make a Telegram bot quote the message it is answering, and make it hear replies to its own messages. Use when the bot ignores replies to its answers in a group (engage_mode 'mention'), when its replies land as loose messages with no visible target, or after an upstream update touches src/delivery.ts, src/channels/chat-sdk-bridge.ts or src/channels/telegram.ts.
+description: Make a Telegram bot quote the message it is answering, open that person's reply box on its answer (force-reply), and hear replies to its own messages. Use when the bot ignores replies to its answers in a group (engage_mode 'mention'), when its replies land as loose messages with no visible target, or after an upstream update touches src/delivery.ts, src/channels/chat-sdk-bridge.ts, src/channels/adapter.ts or src/channels/channel-registry.ts.
 ---
 
 # Telegram reply threading
@@ -14,13 +14,21 @@ Two halves of one conversation problem, in opposite directions:
   single turn, which reads as the bot going silent mid-conversation.
 - **Outbound** — the bot's answers arrived as loose messages. In a busy group,
   an answer several messages below the question is unattributable.
+- **Follow-up** — even with the inbound fix, the person had to remember to hit
+  "Reply" on the bot's answer. The answer now carries Telegram's ForceReply
+  (selective), so that person's reply box opens on it and whatever they type
+  next is a reply to the bot.
 
 **Re-run this after any upstream update that touches `src/delivery.ts`,
-`src/channels/channel-registry.ts`, `src/channels/chat-sdk-bridge.ts`,
-`src/channels/adapter.ts` or `src/channels/telegram.ts`** — the first four are
-upstream-owned and `telegram.ts` is reinstalled wholesale by `/add-telegram`. A
-lost reach-in fails quietly: the bot just goes back to ignoring replies. The
-shipped tests are the alarm.
+`src/channels/channel-registry.ts`, `src/channels/chat-sdk-bridge.ts` or
+`src/channels/adapter.ts`.** All four are upstream-owned. A lost reach-in fails
+quietly: the bot just goes back to ignoring replies. The shipped tests are the
+alarm.
+
+**Nothing here edits `src/channels/telegram.ts`**, deliberately. It is
+reinstalled from the `channels` registry branch by `/add-telegram` *and* by
+every `/update-nanoclaw` skill refresh, which silently dropped the wiring when
+it lived there. The bridge upgrades whatever adapter that file builds instead.
 
 ## How it works
 
@@ -57,7 +65,7 @@ engage on it stays the wiring's decision, unchanged.
 
 ## Apply
 
-### 1. The Telegram subclass — its own module, not a reach-in
+### 1. The Telegram subclass: its own module, not a reach-in
 
 ```bash
 cp "${CLAUDE_SKILL_DIR}/files/telegram-reply-aware.ts" src/channels/telegram-reply-aware.ts
@@ -71,32 +79,44 @@ send to, and the fetch override folds it in. Everything in between — markdown
 conversion, MarkdownV2 escaping, inline keyboards, uploads — stays the
 vendor's, so this survives their changes to any of it.
 
-Kept in its own file **deliberately**: `src/channels/telegram.ts` is
-skill-installed from the `channels` branch and `/add-telegram` overwrites it,
-so the reach-in there must stay small enough to re-apply from memory.
-
 Quoting is groups-only, decided in `replyTarget()` by the chat id's leading
 `-`. A 1:1 DM has nothing to disambiguate and a quote block on every turn is
 clutter. To quote in DMs too, drop that check.
 
-### 2. Two lines in `src/channels/telegram.ts`
+**Force-reply** rides the same fold: whenever a send quotes a message, it also
+gets `reply_markup: { force_reply: true, selective: true }`. `selective` limits
+it to the sender of the quoted message (and anyone @mentioned in the text), so
+only the person being answered gets their reply box opened; the rest of the
+group sees nothing. It never displaces markup the send already carries (an
+inline keyboard on a question or approval card), and unquoted sends (DMs,
+scheduled posts) never get it. To turn force-reply off and keep quoting,
+delete the two `FORCE_REPLY` uses in `foldReplyParameters`.
 
-Replace the vendor factory with the subclass:
+`upgradeToReplyAware(adapter)` at the bottom of the module re-prototypes a
+vendor-built `TelegramAdapter` into a `ReplyAwareTelegramAdapter` in place,
+and returns every other adapter untouched. The subclass has no constructor and
+initializes its one piece of state lazily, which is what makes an upgraded
+instance behave exactly like one built with `new`.
+
+### 2. One line in `src/channels/chat-sdk-bridge.ts`
+
+Import the upgrade next to the other local imports:
 
 ```ts
-// delete: import { createTelegramAdapter } from '@chat-adapter/telegram';
-import { ReplyAwareTelegramAdapter } from './telegram-reply-aware.js';
+import { upgradeToReplyAware } from './telegram-reply-aware.js';
 ```
+
+and apply it where `createChatSdkBridge` takes the adapter:
 
 ```ts
-const telegramAdapter = new ReplyAwareTelegramAdapter({
-  botToken: token,
-  mode: 'polling',
-});
+export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter {
+  // Fork: telegram-reply-threading — upgrade the vendor adapter in place.
+  const adapter = upgradeToReplyAware(config.adapter);
 ```
 
-That is the whole reach-in into the skill-installed file. Named instances go
-through the same `createTelegramBridge`, so every bot identity gets it.
+Every Telegram bot identity, default or named instance, goes through this
+bridge, so all of them get it. `src/channels/telegram.ts` stays exactly as
+`/add-telegram` ships it.
 
 ### 3. `src/channels/adapter.ts` — the carrier field
 
@@ -174,7 +194,10 @@ cp "${CLAUDE_SKILL_DIR}/files/delivery-reply-target.test.ts" src/delivery-reply-
 Both live at paths upstream does not own, so they survive the merge that breaks
 the wiring and fail instead of being clobbered alongside it. The Telegram one
 drives the real adapter against a stubbed `fetch` and asserts on the actual Bot
-API payload, so deleting the reach-in cannot leave it green.
+API payload (quote, force-reply, markup preserved). Its wiring cases build the
+adapter with the vendor's own `createTelegramAdapter`, exactly as `telegram.ts`
+does, and pass it through `createChatSdkBridge`, so losing step 2 turns them
+red.
 
 Then add four cases to `src/channels/chat-sdk-bridge.test.ts` (upstream-owned,
 merge-conflict prone — droppable if a future merge makes them painful), using
@@ -193,15 +216,19 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw   # macOS
 
 No container rebuild — this is all host-side.
 
-In a group the bot is wired to: `@`-mention it once, then **reply** to its
-answer without mentioning it. It should answer again, and its answer should be
-visibly attached to your message. In a DM the answer should carry no quote.
+In a group the bot is wired to: `@`-mention it once. Its answer should be
+visibly attached to your message, and your reply box should open on it. Type a
+follow-up without mentioning it: it should answer again. Others in the group
+should see no reply prompt. In a DM the answer should carry no quote and no
+reply prompt.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Reply to the bot still ignored | host not restarted, or `telegram.ts` reinstalled by `/add-telegram` since | restart; check step 2 survived |
+| Reply to the bot still ignored | host not restarted, or the bridge hook lost in a merge | restart; check step 2 survived (`upgradeToReplyAware` in `chat-sdk-bridge.ts`) |
+| Reply box doesn't open on the answer | the answer wasn't quoted (DM, or no `in_reply_to`), or it carried an inline keyboard | expected; force-reply only rides quoted sends without other markup |
+| Everyone's reply box opens | `selective` dropped from `FORCE_REPLY` | restore `selective: true` |
 | Ignored only in one group | that wiring's `engage_mode`/access gate, not this change | `ncl wirings get --id <id>`; check `dropped_messages` |
 | Ignored right after a restart | `getMe` had not resolved the bot id yet on the first message | transient by design — `isReplyToSelf` claims nothing without an identity |
 | Bot answers but never quotes | it's a DM (by design), or `in_reply_to` was NULL | check `messages_out.in_reply_to` in the session's `outbound.db` |

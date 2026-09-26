@@ -16,54 +16,35 @@ deliberately.
 
    To disable without deleting: `onecli rules update --id <id> --enabled false`.
 
-2. **Revert the reach-in** in
-   `container/agent-runner/src/providers/codex-app-server.ts`:
+2. **Revert the two reach-ins.**
 
-   - delete the `CODEX_DISABLED_FEATURES` and `CODEX_MCP_GATEWAY_ENV` constants;
-   - delete `codexMcpGatewayEnvSection` and the `mcpGatewayEnv` field on
-     `CodexConfigPlan`, and its line in `buildCodexConfigPlan`;
-   - in `renderCodexConfigToml`, delete the `CODEX_DISABLED_FEATURES` loop from
-     the `[features]` block, and restore the stdio env guard to its original
-     form:
+   - `container/Dockerfile`: delete the `# ---- Codex credential lockdown`
+     block and its `COPY codex-managed-config.toml …` line.
+   - `container/agent-runner/src/index.ts`: delete the `withMcpGatewayEnv`
+     import and the comment above the `mcpServers` line, and pass the map
+     straight through again: `mcpServers,`.
 
-     ```ts
-     if (config.env && Object.keys(config.env).length > 0) {
-       lines.push(`[mcp_servers.${tomlName}.env]`);
-       for (const [key, value] of Object.entries(config.env)) {
-         lines.push(`${tomlKey(key)} = ${tomlBasicString(value)}`);
-       }
-     }
-     ```
-
-3. **Delete the standalone guard.**
+3. **Delete the fork-owned files.** Do this *with* step 2, never before: on its
+   own the test is the only thing that would tell you the reach-ins are gone.
 
    ```bash
-   rm -f container/agent-runner/src/providers/codex-credential-lockdown.test.ts
+   rm -f container/codex-managed-config.toml
+   rm -f container/agent-runner/src/mcp-gateway-env.ts
+   rm -f container/agent-runner/src/codex-credential-lockdown.test.ts
    ```
 
-   Do this *with* step 2, never before it: on its own the guard is the only
-   thing that would tell you the reach-in is gone.
-
-4. **Revert the tests** added to
-   `container/agent-runner/src/providers/codex-app-server.test.ts`: the
-   feature-flag assertion, the three gateway-env tests, and the
-   `codexMcpGatewayEnvSection` test. Restore the exact-bytes test — drop the
-   `mcpGatewayEnv: {}` override and the three `[features]` lines from its
-   expected output, and remove `codexMcpGatewayEnvSection` from the import and
-   from the plan assertion in the capability test.
-
-5. **Rebuild and verify.**
+4. **Rebuild and verify.**
 
    ```bash
-   cd container/agent-runner && bun test
+   cd container/agent-runner && bun test && cd ../..
    pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit
    ./container/build.sh
    ncl groups restart --id <group-id>
    ```
 
-   After the next spawn, `.codex-shared/config.toml` should again show
-   `[features]` with only `memories = false`, and no proxy vars under
-   `[mcp_servers.*.env]`.
+   `codex features list` in the image should again show `apps`, `plugins` and
+   `remote_plugin` as `true`, and `.codex-shared/config.toml` should have no
+   proxy vars under `[mcp_servers.*.env]` after the next spawn.
 
 Not touched by this removal: the `.codex-shared/cache/codex_apps_*` caches (stale
 either way), the vaulted ChatGPT account's own connectors, and any secret in the

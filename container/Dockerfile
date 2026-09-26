@@ -124,6 +124,10 @@ RUN --mount=type=cache,target=/root/.cache/pnpm \
 RUN printf '#!/bin/sh\nexec bun /app/src/cli/ncl.ts "$@"\n' > /usr/local/bin/ncl && \
     chmod +x /usr/local/bin/ncl
 
+# ---- Codex credential lockdown (fork: codex-credential-lockdown skill) -------
+# Managed config outranks the per-spawn config.toml and `-c` flags.
+COPY codex-managed-config.toml /etc/codex/managed_config.toml
+
 # ---- Entrypoint --------------------------------------------------------------
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

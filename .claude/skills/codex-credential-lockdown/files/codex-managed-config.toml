@@ -1,0 +1,16 @@
+# Installed by .claude/skills/codex-credential-lockdown.
+#
+# Codex's managed config layer: it outranks $CODEX_HOME/config.toml (which
+# NanoClaw regenerates on every spawn) and `-c` overrides, so nothing inside
+# the container can switch these back on.
+#
+# apps: the Apps/Connectors bridge (`codex_apps` MCP server), authenticated
+#   server-side by the linked ChatGPT account. Its third-party calls leave the
+#   container addressed to chatgpt.com, so no host rule can see them.
+# plugins / remote_plugin: remote MCP plugins carrying their own OAuth grants.
+#
+# The OneCLI vault must be the only credential source for a codex agent.
+[features]
+apps = false
+plugins = false
+remote_plugin = false

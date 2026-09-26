@@ -1,11 +1,12 @@
 /**
  * Telegram reply threading, both directions — a subclass of the vendor
- * adapter, kept in its own module so the reach-in into the skill-installed
- * telegram.ts is two lines (the import, and `new` in place of the factory)
- * and survives a channels-branch reinstall of that file.
+ * adapter, applied by the chat-sdk bridge (`upgradeToReplyAware`) to whatever
+ * adapter instance telegram.ts builds. Nothing here touches telegram.ts: that
+ * file is reinstalled from the `channels` registry branch on every
+ * /update-nanoclaw, which silently dropped the wiring when it lived there.
  */
 import { TelegramAdapter, type TelegramMessage } from '@chat-adapter/telegram';
-import type { AdapterPostableMessage } from 'chat';
+import type { Adapter, AdapterPostableMessage } from 'chat';
 
 import type { PostableReplyTarget } from './chat-sdk-bridge.js';
 
@@ -17,6 +18,13 @@ import type { PostableReplyTarget } from './chat-sdk-bridge.js';
 interface TelegramReplyFields {
   reply_to_message?: { from?: { id?: number; is_bot?: boolean } };
 }
+
+/**
+ * Bot API ForceReply. `selective` limits it to users @mentioned in the text and
+ * the sender of the message being replied to.
+ * @see https://core.telegram.org/bots/api#forcereply
+ */
+const FORCE_REPLY = { force_reply: true, selective: true } as const;
 
 /** Bot API send methods never carry a reply; excluded from the fold below. */
 const NON_REPLY_SEND_METHODS = new Set(['sendChatAction']);
@@ -50,7 +58,12 @@ export class ReplyAwareTelegramAdapter extends TelegramAdapter {
    * upload path awaits between the two points), and the cost is one reply
    * quoting the other's message — cosmetic, and bounded to that.
    */
-  private readonly pendingReplyTargets = new Map<string, number>();
+  // Lazy, not a field initializer: `upgradeToReplyAware` re-prototypes an
+  // instance the vendor constructor already built, so initializers never run.
+  private _pendingReplyTargets?: Map<string, number>;
+  private get pendingReplyTargets(): Map<string, number> {
+    return (this._pendingReplyTargets ??= new Map());
+  }
 
   /** A reply to the bot counts as addressing the bot. */
   protected isBotMentioned(message: TelegramMessage, text: string): boolean {
@@ -129,10 +142,34 @@ export class ReplyAwareTelegramAdapter extends TelegramAdapter {
     // the user sending it and the agent answering. Send unquoted rather than
     // lose the reply.
     const replyParameters = { message_id: target, allow_sending_without_reply: true };
+    // Force-reply, selective: opens the reply box of the person being answered
+    // (and only theirs) on this message, so their next text is a reply to the
+    // bot, which `isBotMentioned` counts as addressing it. Never displaces
+    // markup the send already carries (an inline keyboard on a question card).
+    const hasMarkup = payload instanceof FormData ? payload.has('reply_markup') : payload.reply_markup != null;
     if (payload instanceof FormData) {
       payload.append('reply_parameters', JSON.stringify(replyParameters));
+      if (!hasMarkup) payload.append('reply_markup', JSON.stringify(FORCE_REPLY));
       return payload;
     }
-    return { ...payload, reply_parameters: replyParameters };
+    return { ...payload, reply_parameters: replyParameters, ...(hasMarkup ? {} : { reply_markup: FORCE_REPLY }) };
   }
+}
+
+/**
+ * Give a vendor-built Telegram adapter reply threading, in place. Called by the
+ * chat-sdk bridge on every adapter it wraps; anything that isn't a Telegram
+ * adapter (or is already upgraded) comes back untouched.
+ *
+ * Re-prototyping rather than constructing a `ReplyAwareTelegramAdapter`
+ * keeps telegram.ts, which builds the instance with its own config, entirely
+ * vendor code. The subclass declares no constructor and initializes its only
+ * state lazily, so an upgraded instance is indistinguishable from one built
+ * with `new`.
+ */
+export function upgradeToReplyAware<T extends Adapter>(adapter: T): T {
+  if (adapter instanceof TelegramAdapter && !(adapter instanceof ReplyAwareTelegramAdapter)) {
+    Object.setPrototypeOf(adapter, ReplyAwareTelegramAdapter.prototype);
+  }
+  return adapter;
 }
