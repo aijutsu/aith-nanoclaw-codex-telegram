@@ -9,7 +9,7 @@
 PNPM ?= pnpm
 TSX := $(PNPM) exec tsx
 
-.PHONY: help add-notion-connection list-notion-connections remove-notion-connection
+.PHONY: help add-notion-connection list-notion-connections remove-notion-connection reload-community-agent
 
 help:
 	@$(TSX) scripts/notion-connection.ts help
@@ -27,3 +27,7 @@ list-notion-connections:
 ## before deleting; the token cannot be recovered afterwards.
 remove-notion-connection:
 	@$(TSX) scripts/notion-connection.ts remove
+
+## Restart Louis's containers; updated instructions load on the next message.
+reload-community-agent:
+	@$(TSX) scripts/reload-community-agent.ts
