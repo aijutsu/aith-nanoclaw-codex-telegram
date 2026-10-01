@@ -22,6 +22,7 @@ import path from 'path';
 import { parseSkillSelection, sanitizeStoredMcpServers } from './container-config.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { readGroupPersona } from './group-persona.js';
+import { readGroupPersonality } from './group-personality.js';
 import { log } from './log.js';
 import type { AgentGroup } from './types.js';
 
@@ -163,8 +164,8 @@ const SKILLS_HOST_SUBPATH = path.join('container', 'skills');
  * Regenerate `groups/<folder>/<spec.fileName>` from every instruction source
  * the group has switched on. Deterministic: same inputs, same file.
  *
- * Reads nothing the agent can author except `instructions.prepend.md`, which
- * `readGroupPersona` opens with O_NOFOLLOW.
+ * Reads nothing the agent can author except `instructions.prepend.md` and
+ * `personality.md`, both opened with O_NOFOLLOW.
  */
 export async function composeGroupProjectDoc(
   group: AgentGroup,
@@ -190,6 +191,9 @@ export async function composeGroupProjectDoc(
   // droppable: a group whose persona is evicted stops being that group.
   const persona = readGroupPersona(groupDir);
   if (persona) push('Persona', persona);
+  // Voice and language, agent-owned and size-bounded (fork: group-personality skill).
+  const personality = readGroupPersonality(groupDir);
+  if (personality) push('Personality', personality);
 
   const legacySpec = spec.baseDocPath !== undefined;
   const baseDoc = path.resolve(process.cwd(), spec.baseDocPath ?? BASE_INSTRUCTIONS_PATH);

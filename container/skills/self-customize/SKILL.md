@@ -11,6 +11,7 @@ You can modify your own environment. Different kinds of changes have different w
 
 **What needs to change?**
 
+- **Voice, personality or language preference** → Rewrite `personality.md` (under 4 KB), no approval needed. Never edit `instructions.prepend.md` for these.
 - **Memory or standing instructions** → Edit `memory/` or `instructions.prepend.md` directly, no approval needed. The workspace is persisted on the host. The composed provider document (`CLAUDE.md` or `AGENTS.md`) is regenerated every spawn and must not be edited.
 - **System package (apt) or global npm package** → `install_packages`. Requires admin approval. On approval, image rebuild + container restart happen automatically.
 - **MCP server** → `add_mcp_server`. Requires admin approval. On approval, container restarts with the new server wired up (no rebuild — bun runs TS directly).

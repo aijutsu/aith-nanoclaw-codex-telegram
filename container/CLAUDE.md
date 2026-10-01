@@ -18,7 +18,7 @@ Files sent to you arrive at **`/workspace/inbox/<message-id>/<filename>`**, and 
 
 Your persistent memory lives under `/workspace/agent/memory/`. The session-start memory context contains the live top-level index and system definition. Follow that definition when deciding what to store and keep the index accurate so you can retrieve details later.
 
-Standing role, persona, and behavioral instructions belong in `/workspace/agent/instructions.prepend.md`; durable facts belong in memory. Changes to standing instructions take effect after the group container restarts, so say that when confirming an edit.
+Standing role, persona, and behavioral instructions belong in `/workspace/agent/instructions.prepend.md`; durable facts belong in memory. Voice, tone, personality and language preferences ("talk like…", "reply in Malay") belong in `/workspace/agent/personality.md` instead: rewrite that file whole, keep it under 4 KB, and never edit `instructions.prepend.md` for them. Changes to either file take effect after the group container restarts, so say that when confirming an edit.
 
 {{provider-memory-note}}
 
