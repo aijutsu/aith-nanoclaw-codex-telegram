@@ -61,7 +61,7 @@ afterEach(async () => {
 describe('restart respawn intent', () => {
   it('writes respawn_after_stop before the kill and clears it after the respawn request', async () => {
     const restarted = await restartAgentGroupContainers('ag-1', 'test-restart', 'back online');
-    expect(restarted).toBe(1);
+    expect(restarted).toEqual(['sess-1']);
 
     // The kill has happened but the (captured) exit callback has not fired:
     // the durable intent must already be in place.
@@ -79,7 +79,7 @@ describe('restart respawn intent', () => {
 
   it('writes no intent when no respawn is planned', async () => {
     const restarted = await restartAgentGroupContainers('ag-1', 'plain-stop');
-    expect(restarted).toBe(1);
+    expect(restarted).toEqual(['sess-1']);
     expect(await getSessionClaim('sess-1')).toBeUndefined();
     const [, , onExit] = killContainer.mock.calls[0] as [string, string, (() => void) | undefined];
     expect(onExit).toBeUndefined();

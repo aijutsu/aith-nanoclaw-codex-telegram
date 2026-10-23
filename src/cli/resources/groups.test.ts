@@ -23,7 +23,9 @@ vi.mock('../../container-runner.js', () => ({
 }));
 
 vi.mock('../../container-restart.js', () => ({
-  restartAgentGroupContainers: vi.fn().mockResolvedValue(0),
+  restartAgentGroupContainers: vi.fn().mockResolvedValue([]),
+  stopUnownedGroupContainers: vi.fn().mockResolvedValue(0),
+  clearAgentGroupChatThreads: vi.fn().mockResolvedValue(0),
 }));
 
 vi.mock('../../config.js', async () => {
@@ -36,8 +38,13 @@ const TEST_DIR = '/tmp/nanoclaw-test-cli-groups';
 import { initTestDb, closeDb, runMigrations, createAgentGroup, getDb } from '../../db/index.js';
 import { createSession } from '../../db/sessions.js';
 import { dispatch } from '../dispatch.js';
+import { lookup } from '../registry.js';
 import { ensureContainerConfig, getContainerConfig } from '../../db/container-configs.js';
-import { restartAgentGroupContainers } from '../../container-restart.js';
+import {
+  clearAgentGroupChatThreads,
+  restartAgentGroupContainers,
+  stopUnownedGroupContainers,
+} from '../../container-restart.js';
 import { configFromDb } from '../../container-config.js';
 import type { ContainerConfig } from '../../container-config.js';
 // Side-effect import: registers the `groups-*` commands (including delete).
@@ -98,14 +105,80 @@ describe('groups CLI delete cascades dependent rows (#2525)', () => {
   });
 
   it('waits for host-side group restarts and returns their resolved count', async () => {
-    vi.mocked(restartAgentGroupContainers).mockResolvedValueOnce(3);
+    vi.mocked(restartAgentGroupContainers).mockResolvedValueOnce(['s1', 's2', 's3']);
+    vi.mocked(stopUnownedGroupContainers).mockResolvedValueOnce(1);
 
     const response = await dispatch(
       { id: 'req-restart', command: 'groups-restart', args: { id: 'ag-restart' } },
       { caller: 'host' },
     );
 
-    expect(response).toEqual({ id: 'req-restart', ok: true, data: { restarted: 3, rebuilt: false } });
+    expect(response).toEqual({
+      id: 'req-restart',
+      ok: true,
+      data: { restarted: 3, stoppedUnowned: 1, cleared: 0, rebuilt: false },
+    });
+  });
+
+  it('sweeps containers this host does not own on every restart, --fresh or not', async () => {
+    vi.clearAllMocks(); // no shared reset in this file; calls otherwise accumulate across tests
+    await dispatch({ id: 'r', command: 'groups-restart', args: { id: 'ag-restart' } }, { caller: 'host' });
+
+    expect(stopUnownedGroupContainers).toHaveBeenCalledWith('ag-restart', expect.any(String), expect.any(Set));
+    expect(clearAgentGroupChatThreads).not.toHaveBeenCalled();
+  });
+
+  it('--fresh queues the conversation reset BEFORE the kill, so only a fresh container reads it', async () => {
+    const order: string[] = [];
+    vi.mocked(clearAgentGroupChatThreads).mockImplementationOnce(async () => {
+      order.push('clear');
+      return 2;
+    });
+    vi.mocked(restartAgentGroupContainers).mockImplementationOnce(async () => {
+      order.push('restart');
+      return ['s1', 's2'];
+    });
+
+    const response = await dispatch(
+      { id: 'req-fresh', command: 'groups-restart', args: { id: 'ag-restart', fresh: true } },
+      { caller: 'host' },
+    );
+
+    expect(order).toEqual(['clear', 'restart']);
+    expect(response).toMatchObject({ ok: true, data: { cleared: 2 } });
+  });
+
+  // Two layers refuse this. The guard holds an agent's `groups restart` for
+  // approval, so the handler is not reached at all; the handler's own check is
+  // what stops an APPROVED replay, which re-enters dispatch as an agent caller
+  // carrying a grant. Both polarities below, because an operator approving
+  // "restart my group" has not approved discarding sibling chats' history.
+  it('refuses --fresh from an agent before the handler runs', async () => {
+    vi.clearAllMocks();
+    const response = await dispatch(
+      { id: 'req-agent-fresh', command: 'groups-restart', args: { fresh: true } },
+      { caller: 'agent', agentGroupId: 'ag-restart', sessionId: 'sess-1', messagingGroupId: 'mg-1' },
+    );
+
+    expect(response.ok).toBe(false);
+    expect(clearAgentGroupChatThreads).not.toHaveBeenCalled();
+    expect(restartAgentGroupContainers).not.toHaveBeenCalled();
+  });
+
+  it('refuses --fresh in the handler itself, which is what an approved replay reaches', async () => {
+    vi.clearAllMocks();
+    const restart = lookup('groups-restart')!;
+
+    await expect(
+      restart.handler({ fresh: true }, {
+        caller: 'agent',
+        agentGroupId: 'ag-restart',
+        sessionId: 'sess-1',
+      } as never),
+    ).rejects.toThrow(/operator-only/);
+
+    expect(clearAgentGroupChatThreads).not.toHaveBeenCalled();
+    expect(restartAgentGroupContainers).not.toHaveBeenCalled();
   });
 
   it('deletes a group with sessions, destinations, approvals, members, roles, and wirings', async () => {

@@ -10,7 +10,11 @@ import {
 } from '../../container-config.js';
 import { buildAgentGroupImage, killContainer } from '../../container-runner.js';
 import { requestWake } from '../../request-wake.js';
-import { restartAgentGroupContainers } from '../../container-restart.js';
+import {
+  clearAgentGroupChatThreads,
+  restartAgentGroupContainers,
+  stopUnownedGroupContainers,
+} from '../../container-restart.js';
 import { createAgentGroup, getAgentGroupByFolder } from '../../db/agent-groups.js';
 import { getDb, hasTable } from '../../db/connection.js';
 import { getSession } from '../../db/sessions.js';
@@ -324,15 +328,24 @@ registerResource({
     restart: {
       access: 'approval',
       description:
-        'Restart containers for a group. Use --id <group-id> [--rebuild] [--message <text>]. ' +
+        'Restart containers for a group. Use --id <group-id> [--rebuild] [--fresh] [--message <text>]. ' +
         'From inside a container, --id is auto-filled and only the calling session is restarted. ' +
         '--rebuild rebuilds the container image first (required for package changes). ' +
+        "--fresh also drops each chat session's stored conversation, so the next container opens a new one " +
+        'instead of resuming — use it when changed instructions must not compete with an existing thread. ' +
         '--message sets an on-wake instruction for the fresh container to act on when it starts — ' +
         'use this when you need to continue after the restart (e.g. verify a new tool works, notify the user). ' +
         'Without --message, the container stops and only starts again on the next user message.',
       handler: async (args, ctx) => {
         const id = (args.id as string) || (ctx.caller === 'agent' ? ctx.agentGroupId : undefined);
         if (!id) throw new Error('--id is required');
+        // Operator-only: --fresh discards conversation an agent cannot judge the
+        // value of, across sibling sessions it is not scoped to.
+        if (args.fresh && ctx.caller === 'agent') {
+          throw new Error(
+            "--fresh is operator-only; an agent cannot reset its own or a sibling session's conversation",
+          );
+        }
         if (args.rebuild) {
           // Refuse the WHOLE command in the payload (this command exits 0 even
           // on a nonexistent group id) and restart nothing: the operator asked
@@ -380,9 +393,13 @@ registerResource({
           return { restarted: 1, rebuilt: !!args.rebuild };
         }
 
-        // From the host: restart all running containers in the group
-        const count = await restartAgentGroupContainers(id, 'restarted via ncl', message);
-        return { restarted: count, rebuilt: !!args.rebuild };
+        // From the host: every container of the group, not just this process's.
+        // Order is load-bearing — the reset rows must exist before the kill so
+        // only a fresh container's first poll can read them.
+        const cleared = args.fresh ? await clearAgentGroupChatThreads(id) : 0;
+        const killed = await restartAgentGroupContainers(id, 'restarted via ncl', message);
+        const unowned = await stopUnownedGroupContainers(id, 'restarted via ncl', new Set(killed));
+        return { restarted: killed.length, stoppedUnowned: unowned, cleared, rebuilt: !!args.rebuild };
       },
     },
     'config get': {

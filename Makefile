@@ -28,6 +28,17 @@ list-notion-connections:
 remove-notion-connection:
 	@$(TSX) scripts/notion-connection.ts remove
 
-## Restart Louis's containers; updated instructions load on the next message.
+## Stop every container of the community agent and reset its chat conversations,
+## so the next message starts fresh on the current instructions. Refuses (and
+## stops nothing) if the agent image is missing or personality.md won't compose.
+## Override the group with FOLDER=<slug>.
 reload-community-agent:
-	@$(TSX) scripts/reload-community-agent.ts
+	@$(TSX) scripts/reload-community-agent.ts $(if $(FOLDER),--folder $(FOLDER),)
+
+## Install every prerequisite the course documents — Homebrew, git, jq, Docker,
+## Make, Node, pnpm, Codex — then host dependencies and the agent image. Checks
+## first and only installs what is missing. The one recipe that is not a
+## `pnpm exec` call: it has to run before Node and pnpm exist.
+.PHONY: install-deps
+install-deps:
+	@bash install-dependencies.sh

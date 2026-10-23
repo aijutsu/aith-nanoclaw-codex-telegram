@@ -24,7 +24,9 @@ vi.mock('../src/container-runner.js', () => ({
 }));
 
 vi.mock('../src/container-restart.js', () => ({
-  restartAgentGroupContainers: vi.fn().mockReturnValue(0),
+  restartAgentGroupContainers: vi.fn().mockReturnValue([]),
+  stopUnownedGroupContainers: vi.fn().mockResolvedValue(0),
+  clearAgentGroupChatThreads: vi.fn().mockResolvedValue(0),
 }));
 
 vi.mock('../src/log.js', () => ({

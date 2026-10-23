@@ -120,6 +120,17 @@ export function isClearCommand(msg: MessageInRow): boolean {
 }
 
 /**
+ * True for a row the host wrote on its own behalf rather than relaying from a
+ * person. The host stamps `sender: 'system'` on these (see
+ * `clearAgentGroupChatThreads` and the on-wake restart message), and the runner
+ * uses it to keep an operator action silent: a reset nobody in the chat asked
+ * for should not announce itself there.
+ */
+export function isSystemOriginated(msg: MessageInRow): boolean {
+  return parseContent(msg.content).sender === 'system';
+}
+
+/**
  * True for any chat that needs the outer loop's command path: /clear plus
  * admin/passthrough slash commands the SDK can only dispatch when they are
  * a query's first input. Used by the follow-up poller to bail out and let

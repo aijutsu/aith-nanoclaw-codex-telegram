@@ -25,6 +25,7 @@ import {
   isClearCommand,
   isRunnerCommand,
   isSessionEcho,
+  isSystemOriginated,
   stripInternalTags,
   type RoutingContext,
 } from './formatter.js';
@@ -168,14 +169,20 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
         log('Clearing session (resetting continuation)');
         continuation = undefined;
         clearContinuation(config.providerName);
-        await writeMessageOut({
-          id: generateId(),
-          kind: 'chat',
-          platform_id: routing.platformId,
-          channel_type: routing.channelType,
-          thread_id: routing.threadId,
-          content: JSON.stringify({ text: 'Session cleared.' }),
-        });
+        // A person typing /clear gets told it worked. A reset the host queued
+        // on its own behalf (`ncl groups restart --fresh`) does not announce
+        // itself in the chat: nobody there asked for it, and an operator
+        // reloading instructions would otherwise post a line per reload.
+        if (!isSystemOriginated(msg)) {
+          await writeMessageOut({
+            id: generateId(),
+            kind: 'chat',
+            platform_id: routing.platformId,
+            channel_type: routing.channelType,
+            thread_id: routing.threadId,
+            content: JSON.stringify({ text: 'Session cleared.' }),
+          });
+        }
         commandIds.push(msg.id);
         continue;
       }

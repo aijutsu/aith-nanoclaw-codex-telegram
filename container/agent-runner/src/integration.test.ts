@@ -544,6 +544,32 @@ describe('poll loop — /clear command', () => {
 
     await loopPromise.catch(() => {});
   });
+
+  it('clears silently when the host queued the reset, so an operator reload says nothing in the chat', async () => {
+    setContinuation('mock', 'existing-session-id');
+
+    // Shape the host writes for `ncl groups restart --fresh`: a real chat route
+    // so a message riding along keeps its reply destination, sender 'system' so
+    // the runner knows nobody in the chat asked for this.
+    getInboundDb()
+      .prepare(
+        `INSERT INTO messages_in (id, kind, timestamp, status, platform_id, channel_type, content, on_wake)
+         VALUES ('m-clear-sys', 'chat', datetime('now'), 'pending', 'chan-1', 'discord', ?, 1)`,
+      )
+      .run(JSON.stringify({ text: '/clear', sender: 'system', senderId: 'system' }));
+
+    const provider = new MockProvider({}, () => '<message to="discord-test">should not run</message>');
+    const controller = new AbortController();
+    const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
+
+    await waitFor(() => getContinuation('mock') === undefined, 2000);
+    controller.abort();
+
+    expect(getUndeliveredMessages()).toHaveLength(0);
+    expect(getPendingMessages()).toHaveLength(0);
+
+    await loopPromise.catch(() => {});
+  });
 });
 
 /**
