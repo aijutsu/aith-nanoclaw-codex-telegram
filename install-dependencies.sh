@@ -151,13 +151,26 @@ T_KEY=()
 T_LABEL=()
 T_STATE=()
 T_DETAIL=()
+# Whether THIS run installed the tool, which `state` cannot express: a
+# successful install ends as `present`, the same value as "was already here".
+# uninstall-dependencies.sh needs the difference to avoid offering to remove a
+# git or Node that predates NanoClaw, so it is recorded separately and
+# published in handoff.json.
+T_OWNED=()
 
 t_add() {
   T_KEY[${#T_KEY[@]}]="$1"
   T_LABEL[${#T_LABEL[@]}]="$2"
   T_STATE[${#T_STATE[@]}]="$3"
   T_DETAIL[${#T_DETAIL[@]}]="$4"
+  T_OWNED[${#T_OWNED[@]}]="n"
   log "detect $1: $3 ${4:-}"
+}
+
+t_own() {
+  local i; i=$(t_index "$1") || return 1
+  T_OWNED[$i]="y"
+  log "owned $1"
 }
 
 t_index() {
@@ -240,6 +253,19 @@ write_handoff() {
       if [ "$i" -lt "${#T_KEY[@]}" ]; then printf ',\n'; else printf '\n'; fi
     done
     printf '  },\n'
+    printf '  "installed_by_this_run": [\n'
+    local first=true
+    i=0
+    while [ "$i" -lt "${#T_KEY[@]}" ]; do
+      if [ "${T_OWNED[$i]}" = "y" ]; then
+        $first || printf ',\n'
+        printf '    "%s"' "$(json_escape "${T_KEY[$i]}")"
+        first=false
+      fi
+      i=$((i + 1))
+    done
+    $first || printf '\n'
+    printf '  ],\n'
     printf '  "manual_actions": [\n'
     i=0
     while [ "$i" -lt "${#MANUAL[@]}" ]; do
@@ -957,6 +983,8 @@ run_step() {
     FAILED=true
     return 1
   fi
+
+  t_own "$key"
 
   v="$(verify_tool "$key")"
   if [ -n "$v" ]; then

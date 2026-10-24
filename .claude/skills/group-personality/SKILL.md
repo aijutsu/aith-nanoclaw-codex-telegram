@@ -225,3 +225,21 @@ container skills are read at compose/spawn time.
 | Reload reports `0 owned, 0 unowned` and nothing changes | nothing was running; normal | the next message spawns a fresh container — check the composed doc after it |
 | "Session cleared." appears in the chat on every reload | step 7's `isSystemOriginated` guard lost in a merge | re-apply it in `poll-loop.ts` |
 | Reload exits 0 but the voice is unchanged | the thread was not reset | confirm the handler got `--fresh`; `session_state` should have no `continuation:*` row afterwards |
+| `Failed to stop session … session realization failed: unknown` on every restart | **pre-existing, not this skill** — see below | nothing; the containers do stop |
+
+### The `Failed to stop session` line is cosmetic
+
+Every `ncl groups restart` logs a `Failed to stop session` error and a doubled
+`Stopping session container` line. It is tempting to blame step 7's unowned
+sweep for racing `killContainer`, and that is wrong — measured on 2026-10-19,
+the second stop landed at `12:31:22.726`, *before*
+`restartAgentGroupContainers` returned at `12:31:23.080`, so the sweep had not
+started. The first occurrence in the log predates the skill entirely: line 77
+of a 144,150-line `nanoclaw.log`, 2026-09-30 18:07, already with
+`reason="restart…"`.
+
+The containers do stop, so this is noise rather than a fault, and the cause is
+upstream of anything here. Step 7's sweep still takes an exclusion set of the
+ids `restartAgentGroupContainers` just killed: that race is real in principle
+even though it is not this symptom, and `src/container-restart.test.ts` has a
+regression test for it. Do not "fix" the log line by removing that guard.

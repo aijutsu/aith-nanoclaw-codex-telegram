@@ -1,6 +1,6 @@
 ---
 name: add-install-dependencies
-description: Add `install-dependencies.sh` and a `make install-deps` target — one idempotent script that checks for and installs every course prerequisite (Homebrew, git, jq, Docker, Make, Node, pnpm, Codex), clones NanoClaw to `~/nanoclaw`, runs host setup and pre-builds the agent image, so a student runs one command instead of twenty. Use when setting up a machine from scratch, when adding or restoring the cold-start installer, or after an upstream update drops `install-dependencies.sh`, the `install-deps` Makefile target, or the root-level scan in `setup/installer-shell.test.ts`.
+description: Add `install-dependencies.sh` + `make install-deps` and their mirror `uninstall-dependencies.sh` + `make uninstall` — one idempotent script that checks for and installs every course prerequisite (Homebrew, git, jq, Docker, Make, Node, pnpm, Codex), clones NanoClaw to `~/nanoclaw`, runs host setup and pre-builds the agent image, plus a teardown that asks about each prerequisite separately and only offers what it can prove was installed for NanoClaw. Use when setting up or tearing down a machine, when adding or restoring the cold-start installer or the uninstaller, or after an upstream update drops `install-dependencies.sh`, `uninstall-dependencies.sh`, the `install-deps` or `uninstall` Makefile targets, or the root-level scan in `setup/installer-shell.test.ts`.
 ---
 
 # Add the dependency installer
@@ -32,19 +32,21 @@ the agent provider.
 
 ## Apply
 
-### 1. Copy the installer and its test
+### 1. Copy the two scripts and their tests
 
 ```nc:copy
 files/install-dependencies.sh -> install-dependencies.sh
 files/install-dependencies.test.ts -> scripts/install-dependencies.test.ts
+files/uninstall-dependencies.sh -> uninstall-dependencies.sh
+files/uninstall-dependencies.test.ts -> scripts/uninstall-dependencies.test.ts
 ```
 
-### 2. Add the make target
+### 2. Add the make targets
 
-Append to `Makefile`. The four existing targets are not touched, and the
-recipe line is indented with a **tab** — a space-indented recipe makes `make`
-fail with `missing separator`. GNU Make accumulates `.PHONY` declarations, so a
-second one is correct rather than editing the existing line:
+Append to `Makefile`. The existing targets are not touched, and each recipe
+line is indented with a **tab** — a space-indented recipe makes `make` fail
+with `missing separator`. GNU Make accumulates `.PHONY` declarations, so extra
+ones are correct rather than editing the existing line:
 
 ```nc:append to:Makefile
 .PHONY: install-deps
@@ -52,20 +54,28 @@ install-deps:
 	@bash install-dependencies.sh
 ```
 
-This is the only recipe in the file that is not a `pnpm exec` call, because it
-has to run before Node and pnpm exist. The file header's note about every
-recipe being a single `pnpm exec` call carries that exception.
-
-### 3. Make the installer executable
-
-```nc:run
-chmod +x install-dependencies.sh
+```nc:append to:Makefile
+.PHONY: uninstall
+uninstall:
+	@bash uninstall-dependencies.sh
 ```
 
-### 4. Check it
+These are the only recipes in the file that are not `pnpm exec` calls, and for
+symmetrical reasons: `install-deps` has to run before Node and pnpm exist, and
+`uninstall` has to keep running after it has removed them. Amend the file
+header's note about every recipe being a single `pnpm exec` call to name both
+exceptions.
+
+### 3. Make both scripts executable
+
+```nc:run
+chmod +x install-dependencies.sh uninstall-dependencies.sh
+```
+
+### 4. Check them
 
 ```nc:run effect:test
-pnpm exec vitest run scripts/install-dependencies.test.ts
+pnpm exec vitest run scripts/install-dependencies.test.ts scripts/uninstall-dependencies.test.ts
 ```
 
 ## Widen the shared installer-shell check
@@ -149,7 +159,73 @@ them is already installed, in which case it uses that one and installs neither.
 When it finishes, sign Codex in and run setup:
     codex
     bash nanoclaw.sh --agent-provider codex
+
+To take it all back off later:
+    make uninstall
+
+That hands NanoClaw to its own uninstaller, then asks about each course
+prerequisite separately. It only offers what it can prove was installed for
+NanoClaw — a git or Node that predates it is reported and left alone. See
+what it would touch without changing anything:
+    bash uninstall-dependencies.sh --check
 ```
+
+## How the uninstaller runs
+
+```
+0  environment   platform, WSL, package manager
+1  provenance    read handoff.json + classify every tool  — nothing removed yet
+2  decide        a separate y/N per removable item         — nothing removed yet
+3  delegate      nanoclaw.sh --uninstall, or "already removed"
+4  remove        the confirmed items, reverse install order
+5  profile       drop the marked brew shellenv block
+6  homebrew      typed confirmation, last
+7  report        what went, what stayed, the final rm to run by hand
+```
+
+| Flag | Effect |
+| --- | --- |
+| `--check` | Classify and report only. Asks nothing, removes nothing. |
+| `--dry-run` | Print every command the run would execute, assuming yes to each. |
+| `-y`, `--yes` | Take every prerequisite offered. Does **not** answer Homebrew. |
+| `--keep-nanoclaw` | Leave NanoClaw alone; consider only the prerequisites. |
+| `--dir <path>` | The checkout to remove. Default: this one, else `~/nanoclaw`. |
+
+Exit codes: `0` done · `1` a removal failed · `2` unsupported environment ·
+`3` something left for the human · `4` declined, or no terminal.
+
+**Provenance is the whole problem.** `run_step` records a freshly installed
+tool as state `present` — the same value as "was already here" — so the state
+alone cannot answer "did I install this?". A tool is therefore only ever
+offered on positive proof, and anything else is reported under *Leaving alone*
+with the reason:
+
+| Tool | Offered only when |
+| --- | --- |
+| `codex` | Homebrew owns the cask, or `~/.local/bin/codex` exists (the curl fallback's path). Both ⇒ two separate rows, because `PATH` shows only one. |
+| `pnpm` | the shim is in Homebrew's or npm's prefix **and** Node is not under a version manager — `npm config get prefix` reports the active Node's prefix, which is inside nvm when Node comes from nvm. |
+| `node` | Homebrew owns `node@24` and `node` is not under nvm/fnm/asdf/volta. |
+| `docker` | Homebrew owns the `orbstack` or `docker-desktop` cask. Linux engine packages are never attributable, so never offered. |
+| `jq`, `git` | Homebrew owns the formula. |
+| `make` | **never.** It arrives with Command Line Tools or build-essential and the whole toolchain compiles against it. |
+| profile line | the file carries the literal `# Added by NanoClaw install-dependencies.sh` marker, so a brew line the user wrote themselves is untouched. |
+
+`install-dependencies.sh` also publishes an `installed_by_this_run` list in
+`logs/install-deps/handoff.json`, which the uninstaller uses as a **demoter
+only**: a record that does not name a brew-owned tool means it predates
+NanoClaw and is not offered. Promoting on it would be unsafe — a record saying
+"we installed node" says nothing about the nvm Node answering `node` today.
+
+Two orderings are load-bearing. Provenance is read **before** the NanoClaw
+uninstall, because that deletes `logs/`, where the record lives. And every
+decision is taken **before** anything is removed, which is the property
+`setup/uninstall/plan.ts` already guarantees for its own half: Ctrl-C during
+the questions leaves the machine untouched.
+
+NanoClaw itself is not reimplemented — `nanoclaw.sh --uninstall` already
+removes the service, data, secrets, groups, containers, image and runtime
+tail with its own four confirmations. This delegates to it and then covers
+what its own removal notes declare out of scope: the host prerequisites.
 
 ## Keeping it in step with the course
 
@@ -173,9 +249,17 @@ on supported Ubuntu releases).
 
 ## Integration points
 
-- **`Makefile` — the `install-deps` target.** Guarded by `make -n install-deps`
-  in the test, which also catches a space-indented recipe. The four existing
-  targets are asserted to still resolve.
+- **`Makefile` — the `install-deps` and `uninstall` targets.** Guarded by
+  `make -n` in the tests, which also catches a space-indented recipe. Every
+  pre-existing target is asserted to still resolve. Neither target shows up in
+  `make help`, and that is upstream's shape rather than an oversight: `help` is
+  a recipe that runs `scripts/notion-connection.ts help`, not a scan of the
+  file's `##` comments, so nothing appended can appear in it. The `##` comments
+  are there for whoever reads the `Makefile`.
+- **`handoff.json` — the `installed_by_this_run` key.** Written by the
+  installer's `T_OWNED` array, read by the uninstaller as a demoter. Additive:
+  nothing else consumes that file, and `migrate-v2.sh` has its own separate
+  handoff read by `/migrate-from-v1`.
 - **`setup/installer-shell.test.ts` — the widened scan.** The same rule is
   asserted independently inside `scripts/install-dependencies.test.ts`, over
   both the repo root and this skill's `files/`, so the fork stays covered even
@@ -213,6 +297,113 @@ you to turn on WSL integration for Ubuntu.
 
 **`No terminal to ask on`, exit 4.** Something was missing and there was no
 `/dev/tty` to confirm on. Re-run with `--yes`.
+
+### Uninstalling
+
+**`make uninstall` offers almost nothing.** That is usually correct, not a
+bug — run `bash uninstall-dependencies.sh --check` and read the *Leaving
+alone* column. On a machine where Node came from nvm and git and jq came with
+the system, only Docker and Codex were ever NanoClaw's to install, so two or
+three rows is the honest answer. Each row states its own reason.
+
+**It will not offer to remove Node or git.** It offers nothing it cannot
+prove: Homebrew owning the formula or cask, or the Codex binary sitting in the
+path the course's curl fallback installs to. A Node under a version manager
+and a `/usr/bin/git` fail that test, because removing them would break
+unrelated work. `make` is refused unconditionally — the whole toolchain
+compiles against Command Line Tools.
+
+**`--yes` did not remove Homebrew.** By design. `--yes` exists to skip the
+small per-item confirmations; Homebrew is asked separately and only accepts
+its own name typed in full, because removing it takes every unrelated package
+it manages with it. The prompt prints that count first, and says whether the
+installer put Homebrew there or found it already present — the shell-profile
+marker is the only provenance Homebrew has.
+
+**`codex` is gone but `~/.codex` is still there.** Intended. The removal takes
+the binary and the payload under `~/.codex/packages/standalone`, never
+`~/.codex` itself, which holds the ChatGPT sign-in and config the installer
+never created. The closing report says so and gives the command if you want it
+gone too.
+
+**NanoClaw says "already removed" when things are clearly still there.** The
+check mirrors `setup/uninstall/scan.ts` — service, `data/`, `logs/`,
+`groups/`, `.env`, `node_modules/`, `dist/`, the image, the `ncl` symlink,
+labelled containers. If all of those are absent but something remains, it
+belongs to a *different* checkout: slugs are per-path, so another copy's
+service and image are deliberately none of this script's business.
+
+**An orphaned `docker events` process survives the teardown.** A container
+watcher whose host died gets reparented to PID 1 and keeps running.
+`uninstall-dependencies.sh` sweeps the ones labelled with **this** install's
+slug; `setup/uninstall/` itself scans containers and paths but not watcher
+processes, so a vanished checkout's orphan needs
+`pkill -f 'nanoclaw-install='` or a targeted `kill`.
+
+**Nothing works after a teardown.** Expected — `node_modules/` is part of the
+runtime tail, and every other `make` recipe is a `pnpm exec` call.
+`pnpm install --frozen-lockfile` restores enough to run the tests;
+`bash nanoclaw.sh` puts the install back.
+
+## How this is verified
+
+Two suites, 96 assertions, both running on `ubuntu-latest` in CI:
+
+| Suite | What it proves |
+| --- | --- |
+| `scripts/install-dependencies.test.ts` | `make -n install-deps` resolves to the script — which is also what catches a space-indented recipe — and every pre-existing target still resolves. Each course command is present as a literal string and each forbidden one absent. The bash-3.2 and `/dev/tty` constraints hold. Both payload copies are byte-identical to the installed ones. |
+| `scripts/uninstall-dependencies.test.ts` | The classifier, driven hermetically: a fake `HOME`, a fake `PATH` and a stub `brew` whose answers come from env vars, so the same expectations hold on a laptop that has Homebrew and in a CI container that does not. Every safety invariant is its own named test — never claiming `make`, refusing a version-managed Node, the record demoting but never promoting, the typed Homebrew gate, all decisions taken before any removal. |
+
+Both suites assert against the script with comment lines stripped. Without
+that, a comment explaining which command the script must never use would
+satisfy the check that it never uses it, and a commented-out command would pass
+a fidelity check — the test would be measuring prose.
+
+Run by hand, and worth re-running after any change to the install path:
+
+- **macOS with everything already present.** `--check` reports all eight tools
+  with their versions, installs nothing, exits 0.
+- **A bare `ubuntu:24.04` container**, as a non-root user with passwordless
+  sudo. All eight detected missing with the right apt commands (exit 5); a real
+  install of git, jq and make succeeded and verified each version (exit 0); the
+  re-run was a clean no-op; running as root refused with exit 2 and the
+  create-a-user runbook; no terminal and no `--yes` exited 4 having installed
+  nothing.
+- **The `curl | bash` shape**, piped through stdin so `BASH_SOURCE[0]` is not a
+  file. That is what makes the script fall through to the clone path instead of
+  deciding it is already in a checkout.
+- **WSL**, through the three detection seams: WSL 1 exits 2 printing
+  `wsl --set-version Ubuntu 2`; WSL 2 proceeds and makes Docker a manual step
+  instead of installing Docker Engine inside Ubuntu.
+- **The uninstaller's classifier against a real machine**, with
+  `uninstall-dependencies.sh --check` on a macOS box whose layout happens to
+  exercise most of the table above at once: a Homebrew Codex cask *and* a
+  `~/.local/bin/codex` from the curl fallback, Node and pnpm under nvm,
+  `/usr/bin/git` and `/usr/bin/jq` from the system, OrbStack from Homebrew.
+  It claimed the two Codex copies as separate rows and OrbStack, and left the
+  other five alone, each with its own reason. 3 removable, 5 left alone,
+  nothing changed.
+
+### What is not verified
+
+Four gaps, named rather than papered over:
+
+- **`shellcheck` has never run** against either script. It is not a dependency
+  of this repo and there is no shell-lint job in CI, so treat a manual
+  `shellcheck -s bash` as a pre-merge step.
+- **Real WSL** needs a Windows 11 host. The seams prove the branching, but
+  Docker Desktop's installer and its WSL-integration toggle are GUI and cannot
+  be driven from here.
+- **A from-zero macOS install** cannot be run on a machine that already has the
+  tools. What is exercised on macOS is detection and `--check`.
+- **The uninstaller's live removal path.** Every test, and the real-machine run
+  above, drives `--check` or `--dry-run` — a test that really removed Homebrew
+  would take the maintainer's machine with it. So the classifier is proven on
+  real metal and each `brew uninstall` line is asserted as a string, but the
+  removals themselves have not been executed. The one exception is what this
+  script delegates: `nanoclaw.sh --uninstall` has been run for real on this
+  checkout, just not through `make uninstall`. The first full teardown should
+  be on a machine nobody minds losing.
 
 ## Removal
 

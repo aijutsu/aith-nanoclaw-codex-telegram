@@ -4,7 +4,9 @@
 # MSYS2, WSL, or `choco install make`.
 #
 # Every recipe is a single `pnpm exec` call with no shell-specific syntax, so
-# it behaves the same whether Make runs it through sh or cmd.exe.
+# it behaves the same whether Make runs it through sh or cmd.exe. Two
+# exceptions, both plain bash because they run when pnpm cannot: `install-deps`
+# has to work before Node exists, and `uninstall` has to work after it is gone.
 
 PNPM ?= pnpm
 TSX := $(PNPM) exec tsx
@@ -42,3 +44,10 @@ reload-community-agent:
 .PHONY: install-deps
 install-deps:
 	@bash install-dependencies.sh
+
+## Uninstall this copy. Hands NanoClaw itself to nanoclaw.sh --uninstall, then
+## walks the course prerequisites one at a time, offering only what it can prove
+## this installer put there. Nothing is removed without a y/N; --check previews.
+.PHONY: uninstall
+uninstall:
+	@bash uninstall-dependencies.sh

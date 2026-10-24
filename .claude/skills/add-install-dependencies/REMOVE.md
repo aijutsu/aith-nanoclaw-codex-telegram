@@ -1,13 +1,18 @@
 # Remove the dependency installer
 
-Reverses everything apply added. The tools the installer put on the machine are
-**not** removed — those are the user's own system state, like the rows a wiring
-step creates. Neither is `~/nanoclaw`.
+Reverses everything apply added: both scripts, both make targets, the
+installer-shell widening and the installer's provenance key.
 
-## 1. Remove the make target
+This removes the *tooling*, not the tools. Homebrew, git, jq, Docker, Node,
+pnpm and Codex stay where they are, and so does `~/nanoclaw`. To take those
+off the machine, run `make uninstall` **before** removing this skill — that is
+what it is for, and once these files are gone there is nothing left that knows
+which of them were installed for NanoClaw.
 
-Delete the appended block from `Makefile`, all five lines including the second
-`.PHONY` declaration and the leading `##` comment:
+## 1. Remove the make targets
+
+Delete both appended blocks from `Makefile`, including their `.PHONY`
+declarations and leading `##` comments:
 
 ```make
 ## Install every prerequisite the course documents — Homebrew, git, jq, Docker,
@@ -17,19 +22,35 @@ Delete the appended block from `Makefile`, all five lines including the second
 .PHONY: install-deps
 install-deps:
 	@bash install-dependencies.sh
+
+## Uninstall this copy. Hands NanoClaw itself to nanoclaw.sh --uninstall, then
+## walks the course prerequisites one at a time, offering only what it can prove
+## this installer put there. Nothing is removed without a y/N; --check previews.
+.PHONY: uninstall
+uninstall:
+	@bash uninstall-dependencies.sh
+```
+
+Also restore the file header's note to its original two lines, dropping the
+sentence that named these two recipes as the exceptions to it:
+
+```make
+# Every recipe is a single `pnpm exec` call with no shell-specific syntax, so
+# it behaves the same whether Make runs it through sh or cmd.exe.
 ```
 
 Leave the four original targets — `help`, `add-notion-connection`,
 `list-notion-connections`, `remove-notion-connection` — and
 `reload-community-agent` if the group-personality skill is applied.
 
-Check: `make -n help` still works and `make -n install-deps` now fails with
-`No rule to make target`.
+Check: `make -n help` still works, and `make -n install-deps` and
+`make -n uninstall` both fail with `No rule to make target`.
 
 ## 2. Delete the copied files
 
 ```bash
-rm -f install-dependencies.sh scripts/install-dependencies.test.ts
+rm -f install-dependencies.sh scripts/install-dependencies.test.ts \
+      uninstall-dependencies.sh scripts/uninstall-dependencies.test.ts
 ```
 
 ## 3. Revert the installer-shell scan
@@ -52,7 +73,20 @@ in any file the test scans. Reverting it would reintroduce that bug for
 
 Check: `pnpm exec vitest run setup/installer-shell.test.ts` passes.
 
-## 4. Verify
+## 4. Revert the installer's provenance record
+
+In `install-dependencies.sh`, drop the `T_OWNED` array and its three touch
+points — the declaration beside `T_STATE`, the initialiser line in `t_add`,
+the `t_own()` function, the `t_own "$key"` call in `run_step`, and the
+`"installed_by_this_run"` block in `write_handoff`.
+
+Only the uninstaller reads that key, so removing it with the uninstaller is
+correct rather than merely tidy. Nothing else consumes `handoff.json`.
+
+Check: `pnpm exec vitest run scripts/install-dependencies.test.ts` passes, and
+`/bin/bash -n install-dependencies.sh` still parses under bash 3.2.
+
+## 5. Verify
 
 ```bash
 git status
