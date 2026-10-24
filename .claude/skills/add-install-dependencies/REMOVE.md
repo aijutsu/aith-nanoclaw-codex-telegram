@@ -41,7 +41,7 @@ sentence that named these two recipes as the exceptions to it:
 
 Leave the four original targets — `help`, `add-notion-connection`,
 `list-notion-connections`, `remove-notion-connection` — and
-`reload-community-agent` if the group-personality skill is applied.
+`reload-community-agent` if the reload-community-agent skill is applied.
 
 Check: `make -n help` still works, and `make -n install-deps` and
 `make -n uninstall` both fail with `No rule to make target`.

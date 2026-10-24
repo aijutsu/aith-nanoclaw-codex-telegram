@@ -1,6 +1,6 @@
 ---
 name: group-personality
-description: Give each agent group a separate, agent-owned `personality.md` for voice, tone and language preferences, composed into the project document right after the persona, so "talk like X" or "reply in Malay" never edits `instructions.prepend.md` and its standing rules. Also installs the operator reload (`make reload-community-agent`) that makes an edited voice take effect on the next message. Use when an agent rewrote or appended to its persona for a style request, when a personality edit does not reach the chat, or after an upstream update touches src/project-doc-compose.ts, src/container-restart.ts, src/cli/resources/groups.ts, container/agent-runner/src/poll-loop.ts, container/CLAUDE.md or container/skills/self-customize/SKILL.md.
+description: Give each agent group a separate, agent-owned `personality.md` for voice, tone and language preferences, composed into the project document right after the persona, so "talk like X" or "reply in Malay" never edits `instructions.prepend.md` and its standing rules. Also adds the host-side plumbing (`ncl groups restart --fresh`) that the sibling `reload-community-agent` skill's operator command needs to make an edited voice take effect on the next message. Use when an agent rewrote or appended to its persona for a style request, when a personality edit does not reach the chat, or after an upstream update touches src/project-doc-compose.ts, src/container-restart.ts, src/cli/resources/groups.ts, container/agent-runner/src/poll-loop.ts, container/CLAUDE.md or container/skills/self-customize/SKILL.md.
 ---
 
 # Group personality
@@ -104,7 +104,8 @@ the rest from the template it was stamped from.
 
 An edited `personality.md` only reaches an agent when a container composes the
 project document again, so there has to be a way to make that happen now. Three
-reach-ins plus a script.
+reach-ins here; the operator command that drives them is the sibling
+`reload-community-agent` skill, for which this step is the prerequisite.
 
 **`src/container-restart.ts`** — append `stopUnownedGroupContainers` and
 `clearAgentGroupChatThreads`, and import `INSTALL_SLUG` from `./config.js`,
@@ -144,43 +145,21 @@ export function isSystemOriginated(msg: MessageInRow): boolean {
 Without it every reload posts a line into the group chat for an action nobody
 there took.
 
-**The script and its target:**
+**The script, its test and the `Makefile` target are not this skill's to
+install.** The sibling `reload-community-agent` skill owns
+`scripts/reload-community-agent.ts`, `scripts/reload-community-agent.test.ts`
+and the `make reload-community-agent` target, and it carries the only copy —
+two skills shipping the same path would race, and whichever ran last would win
+silently. Apply that skill after this step.
 
-```bash
-cp "${CLAUDE_SKILL_DIR}/files/reload-community-agent.ts" scripts/reload-community-agent.ts
-```
+The dependency runs one way and does not fail loudly: the three reach-ins above
+are what give `groups-restart` its `--fresh` flag and the `stoppedUnowned` /
+`cleared` counts in its payload. `restart` deliberately has no `args` array, so
+an unplumbed host does not reject `--fresh` — it ignores it, returns the old
+`{ restarted, rebuilt }`, and the reload reports `undefined` for both counts
+while resetting nothing.
 
-Add the `Makefile` target (and `reload-community-agent` to `.PHONY`):
-
-```make
-## Stop every container of the community agent and reset its chat conversations,
-## so the next message starts fresh on the current instructions. Refuses (and
-## stops nothing) if the agent image is missing or personality.md won't compose.
-## Override the group with FOLDER=<slug>.
-reload-community-agent:
-	@$(TSX) scripts/reload-community-agent.ts $(if $(FOLDER),--folder $(FOLDER),)
-```
-
-### 8. The preflights are the point
-
-The script refuses, and stops nothing, when the agent image is absent or when
-`readGroupPersonality` returns null. Both are silent from the chat, and the
-second is indistinguishable from "the reload didn't work":
-
-- A pruned or reset Docker daemon takes the image away without touching
-  anything NanoClaw can see. Every spawn then fails `image-unavailable`, which
-  the host classifies `retryable`, so it retries every sweep forever at warn
-  level. `ncl groups restart --rebuild` cannot fix it — `buildAgentGroupImage`
-  throws `No packages to install` for a group with no apt/npm packages, and only
-  layers onto an existing base. `./container/build.sh` is the fix.
-- A `personality.md` that is missing, empty, a symlink, or over
-  `PERSONALITY_MAX_BYTES` is dropped from the composed document entirely.
-
-Do not "improve" the script by restarting anyway and warning. The old version
-reported `stopped 0 running container(s). Updated instructions will load on the
-next message.` through an eleven-day outage.
-
-### 9. Fresh conversation, not just a fresh container
+### 8. Fresh conversation, not just a fresh container
 
 A resumed Codex thread does re-read `AGENTS.md` — it records the document in
 `world_state` and emits a fresh `agents_md` delta on resume — so a kill alone is
@@ -190,7 +169,7 @@ competes with it. The continuation lives in `session_state` in the session's
 `outbound.db`, whose single writer is the container, so the host asks via
 `/clear` rather than writing it.
 
-### 10. Verify
+### 9. Verify
 
 ```bash
 pnpm exec vitest run src/group-personality.test.ts src/project-doc-compose.test.ts \

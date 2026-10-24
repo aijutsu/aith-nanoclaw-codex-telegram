@@ -1,7 +1,12 @@
 # Remove: group-personality
 
-Reverses everything `SKILL.md` applied. Safe: nothing else depends on it. Voice
-requests then go back into `instructions.prepend.md`.
+Reverses everything `SKILL.md` applied. Voice requests then go back into
+`instructions.prepend.md`.
+
+**One dependent:** the `reload-community-agent` skill's command needs step 7's
+`--fresh` plumbing. Run its `REMOVE.md` first — reverting step 7 underneath it
+leaves a `make reload-community-agent` that reports `undefined` counts and
+resets nothing, which is the failure mode step 7 existed to prevent.
 
 1. **Fold personalities back first.** For each `groups/<folder>/personality.md`,
    append its content to that group's `instructions.prepend.md` if the voice
@@ -18,8 +23,9 @@ requests then go back into `instructions.prepend.md`.
    personality or language preference" bullet.
 6. Remove the `personality.md` sentence from any template persona that has it
    (community-assistant rule 12).
-7. **Revert the reload (step 7).** Delete `scripts/reload-community-agent.ts`
-   and its `Makefile` target and `.PHONY` entry. In `src/container-restart.ts`
+7. **Revert the reload plumbing (step 7).** The script, its test and the
+   `Makefile` target belong to `reload-community-agent`; its `REMOVE.md` takes
+   them. In `src/container-restart.ts`
    drop `stopUnownedGroupContainers` and `clearAgentGroupChatThreads` plus the
    four imports they added (`INSTALL_SLUG`, `getSessionDriver`,
    `SupervisedSnapshot`, `getMessagingGroup`) and restore the module's doc
